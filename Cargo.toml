@@ -1,0 +1,33 @@
+[package]
+name = "rustman"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+anyhow = "1.0.104"
+base64 = "0.23.1"
+chrono = { version = "0.4.45", features = ["serde"] }
+dirs = "7.0.0"
+getrandom = "0.3"
+eframe = "0.37.0"
+egui = "0.37.0"
+egui_extras = "0.37.0"
+image = { version = "0.25.10", default-features = false, features = ["png"] }
+portable-pty = "0.9.0"
+reqwest = { version = "0.13.5", default-features = false, features = ["rustls", "json", "multipart", "cookies", "gzip", "brotli", "deflate", "stream"] }
+rfd = "0.18.0"
+rquickjs = "0.14"
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = { version = "1.0.154", features = ["preserve_order"] }
+serde_norway = "0.9.42"
+shell-words = "1.1.1"
+tokio = { version = "1.54.1", features = ["rt-multi-thread", "macros", "time", "net", "io-util", "sync"] }
+url = "2.5.8"
+uuid = { version = "1.29.3", features = ["v4", "serde"] }
+vt100 = "0.18.1"
+
+[profile.dev]
+debug = "line-tables-only"
+
+[profile.dev.package."*"]
+debug = false
