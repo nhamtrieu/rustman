@@ -37,7 +37,7 @@ bin=$(cd "$(dirname "$bin")" && pwd)/$(basename "$bin")
 
 mkdir -p "$apps" "$icon_dir" "$scalable_dir"
 cp "$repo/assets/logo/icon-256.png" "$icon_dir/rustman.png"
-cp "$repo/assets/logo/logo.svg" "$scalable_dir/rustman.svg"
+cp "$repo/assets/logo/icon.svg" "$scalable_dir/rustman.svg"
 
 cat > "$apps/rustman.desktop" <<EOF
 [Desktop Entry]
