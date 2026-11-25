@@ -1,5 +1,7 @@
 # Rustman
 
+[English](README.en.md) | **Tiếng Việt**
+
 API client kiểu Postman, viết bằng Rust (egui + reqwest). Native, một file binary, không cần tài khoản hay cloud.
 
 ## Chạy
