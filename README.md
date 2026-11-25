@@ -143,7 +143,11 @@ Workspace được lưu vào `~/.local/share/rustman/workspace.json` (Linux). Đ
 | `src/app/terminal.rs` | Terminal tích hợp (portable-pty + vt100) |
 | `src/app/views.rs` | Tab spec, dataset, document; header chung; renderer Markdown |
 
-Font: Inter, IBM Plex Mono (SIL OFL 1.1); icon: Phosphor (MIT). File license nằm trong `assets/fonts/`.
+## License
+
+Rustman phát hành theo giấy phép [MIT](LICENSE).
+
+Font: Inter, IBM Plex Mono (SIL OFL 1.1); icon: Phosphor (MIT). File license nằm trong `assets/fonts/`. Thư viện JS nhúng sẵn: xem `src/script/lib/LICENSES.md`.
 
 ## Test
 
