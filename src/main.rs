@@ -30,7 +30,11 @@ fn main() -> eframe::Result {
             .with_title("Rustman")
             .with_app_id("rustman")
             .with_inner_size([1600.0, 1000.0])
-            .with_min_inner_size([800.0, 500.0]),
+            .with_min_inner_size([800.0, 500.0])
+            .with_icon(
+                eframe::icon_data::from_png_bytes(include_bytes!("../assets/logo/icon-256.png"))
+                    .expect("bundled app icon is a valid PNG"),
+            ),
         ..Default::default()
     };
     eframe::run_native("Rustman", options, Box::new(|cc| Ok(Box::new(app::RustmanApp::new(cc)))))

@@ -1,3 +1,10 @@
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="assets/logo/logo-dark.svg">
+    <img src="assets/logo/logo.svg" alt="Rustman" width="128" height="128">
+  </picture>
+</p>
+
 # Rustman
 
 [English](README.en.md) | **Tiếng Việt**
