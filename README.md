@@ -19,6 +19,13 @@ cargo run --release
 
 Trên Linux cần các thư viện hệ thống cho winit/wgpu (X11/Wayland, xkbcommon). Hộp thoại chọn file dùng xdg-desktop-portal.
 
+Để dock/taskbar trên Linux (GNOME, KDE...) hiện đúng icon và có Rustman trong menu ứng dụng, cài launcher cho user hiện tại sau khi build:
+
+```bash
+scripts/install-desktop.sh            # dùng target/release/rustman
+scripts/install-desktop.sh --uninstall
+```
+
 ## Tính năng
 
 - **Request**: GET/POST/PUT/PATCH/DELETE/HEAD/OPTIONS, query params đồng bộ hai chiều với URL, headers, nhiều tab (chuột phải vào tab: New Request, Duplicate Tab, Close / Force Close Tab, Close Other Tabs, Close All Tabs, Force Close All Tabs).

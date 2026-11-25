@@ -19,6 +19,13 @@ cargo run --release
 
 On Linux you need the system libraries for winit/wgpu (X11/Wayland, xkbcommon). The file picker uses xdg-desktop-portal.
 
+To get the right icon in the Linux dock/taskbar (GNOME, KDE, ...) and list Rustman in the app menu, install the launcher for the current user after building:
+
+```bash
+scripts/install-desktop.sh            # uses target/release/rustman
+scripts/install-desktop.sh --uninstall
+```
+
 ## Features
 
 - **Requests**: GET/POST/PUT/PATCH/DELETE/HEAD/OPTIONS, query params synced both ways with the URL, headers, multiple tabs (right-click a tab: New Request, Duplicate Tab, Close / Force Close Tab, Close Other Tabs, Close All Tabs, Force Close All Tabs).
