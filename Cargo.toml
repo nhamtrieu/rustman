@@ -34,3 +34,6 @@ debug = "line-tables-only"
 
 [profile.dev.package."*"]
 debug = false
+
+[profile.release]
+strip = true

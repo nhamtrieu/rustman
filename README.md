@@ -15,11 +15,18 @@ API client kiểu Postman, viết bằng Rust (egui + reqwest). Native, một fi
 
 ## Tải về
 
-File chạy sẵn cho Linux (x86_64), macOS (Apple Silicon và Intel) và Windows (x86_64) ở trang [Releases](https://github.com/nhamtrieu/rustman/releases), kèm `SHA256SUMS.txt`.
+Trang [Releases](https://github.com/nhamtrieu/rustman/releases) có hai loại bản:
 
-- **Linux**: giải nén rồi chạy `./rustman`. Để có icon trên dock và trong menu ứng dụng: `scripts/install-desktop.sh ./rustman`.
-- **macOS**: bản build chưa được ký, lần đầu cần chạy `xattr -d com.apple.quarantine rustman` (hoặc chuột phải → Open).
-- **Windows**: giải nén rồi chạy `rustman.exe`.
+- **Bản ổn định** (`v0.2.0`, ...): phát hành khi gắn tag phiên bản.
+- **Nightly**: tự build lại sau mỗi lần push lên `main`, tên file không đổi nên link tải luôn trỏ tới bản mới nhất, ví dụ [rustman-nightly-amd64.deb](https://github.com/nhamtrieu/rustman/releases/download/nightly/rustman-nightly-amd64.deb). Có thể chưa ổn định.
+
+| Hệ điều hành | Trình cài đặt | File nén |
+|---|---|---|
+| Ubuntu / Debian (x86_64) | `rustman-…-amd64.deb`: `sudo apt install ./rustman-…-amd64.deb`, có sẵn icon và mục trong menu ứng dụng | `…-x86_64-unknown-linux-gnu.tar.gz`; icon dock: `scripts/install-desktop.sh ./rustman` |
+| macOS Apple Silicon / Intel | `rustman-…-macos-arm64.dmg` / `…-macos-x64.dmg`: kéo Rustman vào Applications | `…-aarch64-apple-darwin.tar.gz` / `…-x86_64-apple-darwin.tar.gz` |
+| Windows (x86_64) | `rustman-…-x64.msi`: cài vào Program Files, có shortcut trong Start Menu | `…-x86_64-pc-windows-msvc.zip` |
+
+Mỗi bản có `SHA256SUMS.txt` để kiểm tra file. Bản macOS chưa được Apple ký: lần đầu mở, chuột phải vào Rustman → Open (hoặc `xattr -d com.apple.quarantine /Applications/Rustman.app`). Windows SmartScreen có thể cảnh báo vì trình cài chưa ký: chọn *More info* → *Run anyway*.
 
 ## Chạy từ source
 

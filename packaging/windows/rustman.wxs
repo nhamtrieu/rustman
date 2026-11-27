@@ -1,0 +1,51 @@
+<!--
+  Windows installer for Rustman (WiX Toolset v5).
+  Build: wix build -arch x64 -d Version=0.2.0 -d BinDir=target\x86_64-pc-windows-msvc\release
+         -d RepoDir=. packaging\windows\rustman.wxs -o rustman.msi
+  Installs into Program Files\Rustman with a Start Menu shortcut. A newer (or same-version
+  nightly) installer upgrades the existing install in place.
+-->
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+  <Package Name="Rustman"
+           Manufacturer="Rustman"
+           Version="$(var.Version)"
+           UpgradeCode="6B1E8C2A-4F3D-4A7B-9E21-5C8D0F7A3B64"
+           Scope="perMachine"
+           Compressed="yes">
+    <MajorUpgrade AllowSameVersionUpgrades="yes" DowngradeErrorMessage="A newer version of Rustman is already installed." />
+    <MediaTemplate EmbedCab="yes" />
+
+    <Icon Id="RustmanIcon" SourceFile="$(var.RepoDir)\assets\logo\rustman.ico" />
+    <Property Id="ARPPRODUCTICON" Value="RustmanIcon" />
+    <Property Id="ARPURLINFOABOUT" Value="https://github.com/nhamtrieu/rustman" />
+
+    <StandardDirectory Id="ProgramFiles64Folder">
+      <Directory Id="INSTALLFOLDER" Name="Rustman">
+        <Component Id="RustmanExe">
+          <File Id="RustmanExeFile" Source="$(var.BinDir)\rustman.exe" KeyPath="yes" />
+        </Component>
+        <Component Id="RustmanLicense">
+          <File Source="$(var.RepoDir)\LICENSE" Name="LICENSE.txt" />
+        </Component>
+      </Directory>
+    </StandardDirectory>
+
+    <StandardDirectory Id="ProgramMenuFolder">
+      <Component Id="StartMenuShortcut" Guid="3F0D9B71-2C6E-4E8A-A4D5-7B19E6C2F840">
+        <Shortcut Id="RustmanShortcut"
+                  Name="Rustman"
+                  Description="Native Postman-style API client"
+                  Target="[INSTALLFOLDER]rustman.exe"
+                  WorkingDirectory="INSTALLFOLDER"
+                  Icon="RustmanIcon" />
+        <RegistryValue Root="HKLM" Key="Software\Rustman" Name="StartMenuShortcut" Type="integer" Value="1" KeyPath="yes" />
+      </Component>
+    </StandardDirectory>
+
+    <Feature Id="Main" Title="Rustman">
+      <ComponentRef Id="RustmanExe" />
+      <ComponentRef Id="RustmanLicense" />
+      <ComponentRef Id="StartMenuShortcut" />
+    </Feature>
+  </Package>
+</Wix>

@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Rustman
+GenericName=API Client
+Comment=Native Postman-style API client written in Rust
+Exec=rustman
+Icon=rustman
+Terminal=false
+Categories=Development;
+Keywords=api;http;rest;postman;graphql;
+StartupWMClass=rustman

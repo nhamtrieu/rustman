@@ -15,11 +15,18 @@ A Postman-style API client written in Rust (egui + reqwest). Native, a single bi
 
 ## Download
 
-Prebuilt binaries for Linux (x86_64), macOS (Apple Silicon and Intel) and Windows (x86_64) are on the [Releases](https://github.com/nhamtrieu/rustman/releases) page, with `SHA256SUMS.txt`.
+The [Releases](https://github.com/nhamtrieu/rustman/releases) page has two kinds of builds:
 
-- **Linux**: extract and run `./rustman`. For the dock icon and an app-menu entry: `scripts/install-desktop.sh ./rustman`.
-- **macOS**: the build is not signed; the first time, run `xattr -d com.apple.quarantine rustman` (or right-click → Open).
-- **Windows**: extract and run `rustman.exe`.
+- **Stable** (`v0.2.0`, ...): published when a version tag is pushed.
+- **Nightly**: rebuilt after every push to `main`. File names never change, so links always point to the latest build, e.g. [rustman-nightly-amd64.deb](https://github.com/nhamtrieu/rustman/releases/download/nightly/rustman-nightly-amd64.deb). It may be unstable.
+
+| OS | Installer | Archive |
+|---|---|---|
+| Ubuntu / Debian (x86_64) | `rustman-…-amd64.deb`: `sudo apt install ./rustman-…-amd64.deb`, with the icon and an app-menu entry | `…-x86_64-unknown-linux-gnu.tar.gz`; dock icon: `scripts/install-desktop.sh ./rustman` |
+| macOS Apple Silicon / Intel | `rustman-…-macos-arm64.dmg` / `…-macos-x64.dmg`: drag Rustman to Applications | `…-aarch64-apple-darwin.tar.gz` / `…-x86_64-apple-darwin.tar.gz` |
+| Windows (x86_64) | `rustman-…-x64.msi`: installs into Program Files with a Start Menu shortcut | `…-x86_64-pc-windows-msvc.zip` |
+
+Each build comes with `SHA256SUMS.txt`. The macOS build is not signed by Apple: the first time, right-click Rustman → Open (or `xattr -d com.apple.quarantine /Applications/Rustman.app`). Windows SmartScreen may warn because the installer is not signed: choose *More info* → *Run anyway*.
 
 ## Running from source
 

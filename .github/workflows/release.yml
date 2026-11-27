@@ -1,15 +1,23 @@
 name: Release
 
-# Pushing a tag like v0.2.0 builds every platform and publishes a GitHub Release with the
-# archives. Running it by hand (Actions → Release → Run workflow) only builds the archives and
-# keeps them as workflow artifacts, without creating a release.
+# - Push a tag like v0.2.0: build every platform and publish a GitHub Release (marked latest).
+# - Push to main: rebuild the "nightly" pre-release, whose download links never change.
+# - Run by hand (Actions → Release → Run workflow): only build, keep files as workflow artifacts.
+#
+# Each platform ships a plain archive and an installer: .deb (Linux), .dmg (macOS), .msi (Windows).
 on:
   push:
+    branches: [main]
     tags: ["v*"]
   workflow_dispatch:
 
 permissions:
   contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  # A newer push to main replaces a nightly build in progress; tag builds always finish.
+  cancel-in-progress: ${{ github.ref_type == 'branch' }}
 
 env:
   CARGO_TERM_COLOR: always
@@ -22,10 +30,10 @@ jobs:
       matrix:
         include:
           # 22.04 keeps the glibc requirement low so the binary runs on older distros too.
-          - { target: x86_64-unknown-linux-gnu, os: ubuntu-22.04 }
-          - { target: aarch64-apple-darwin, os: macos-latest }
-          - { target: x86_64-apple-darwin, os: macos-latest }
-          - { target: x86_64-pc-windows-msvc, os: windows-latest }
+          - { target: x86_64-unknown-linux-gnu, os: ubuntu-22.04, installer: deb }
+          - { target: aarch64-apple-darwin, os: macos-latest, installer: dmg, arch: arm64 }
+          - { target: x86_64-apple-darwin, os: macos-latest, installer: dmg, arch: x64 }
+          - { target: x86_64-pc-windows-msvc, os: windows-latest, installer: msi }
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -38,16 +46,32 @@ jobs:
       - name: Install Linux build dependencies
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y libxkbcommon-dev libwayland-dev libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev
+
+      - name: Versions
+        shell: bash
+        run: |
+          cargo_version=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
+          if [ "$GITHUB_REF_TYPE" = tag ]; then
+            label=$GITHUB_REF_NAME; pkg=${GITHUB_REF_NAME#v}; deb=$pkg
+          else
+            label=nightly; pkg=$cargo_version; deb="${cargo_version}~nightly.${GITHUB_RUN_NUMBER}"
+            [ "$GITHUB_EVENT_NAME" = push ] || label="dev-${GITHUB_SHA::7}"
+          fi
+          {
+            echo "LABEL=$label"         # in file names: v0.2.0, nightly, dev-abc1234
+            echo "PKG_VERSION=$pkg"     # numeric x.y.z for the .msi and the .app
+            echo "DEB_VERSION=$deb"
+            echo "BUILD_NUMBER=$GITHUB_RUN_NUMBER"
+          } >> "$GITHUB_ENV"
+
       - name: Build
         run: cargo build --release --locked --target ${{ matrix.target }}
 
-      - name: Package (Linux, macOS)
+      - name: Archive (Linux, macOS)
         if: runner.os != 'Windows'
         shell: bash
         run: |
-          version="${GITHUB_REF_NAME}"
-          [ "$GITHUB_REF_TYPE" = tag ] || version="dev-${GITHUB_SHA::7}"
-          name="rustman-${version}-${{ matrix.target }}"
+          name="rustman-${LABEL}-${{ matrix.target }}"
           mkdir -p "dist/$name"
           cp "target/${{ matrix.target }}/release/rustman" README.md README.en.md LICENSE "dist/$name/"
           if [ "$RUNNER_OS" = Linux ]; then
@@ -59,16 +83,32 @@ jobs:
           tar -C dist -czf "dist/$name.tar.gz" "$name"
           rm -rf "dist/$name"
 
-      - name: Package (Windows)
+      - name: Archive (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          $version = if ($env:GITHUB_REF_TYPE -eq 'tag') { $env:GITHUB_REF_NAME } else { "dev-$($env:GITHUB_SHA.Substring(0, 7))" }
-          $name = "rustman-$version-${{ matrix.target }}"
+          $name = "rustman-$env:LABEL-${{ matrix.target }}"
           New-Item -ItemType Directory -Force -Path "dist/$name" | Out-Null
           Copy-Item "target/${{ matrix.target }}/release/rustman.exe", README.md, README.en.md, LICENSE -Destination "dist/$name/"
           Compress-Archive -Path "dist/$name" -DestinationPath "dist/$name.zip"
           Remove-Item -Recurse -Force "dist/$name"
+
+      - name: Installer (.deb)
+        if: matrix.installer == 'deb'
+        run: scripts/package-deb.sh "target/${{ matrix.target }}/release/rustman" "$DEB_VERSION" "dist/rustman-${LABEL}-amd64.deb"
+
+      - name: Installer (.dmg)
+        if: matrix.installer == 'dmg'
+        run: scripts/package-macos.sh "target/${{ matrix.target }}/release/rustman" "$PKG_VERSION" "$BUILD_NUMBER" "dist/rustman-${LABEL}-macos-${{ matrix.arch }}.dmg"
+
+      - name: Installer (.msi)
+        if: matrix.installer == 'msi'
+        shell: pwsh
+        run: |
+          dotnet tool install --global wix --version 5.0.2
+          wix build -arch x64 -d "Version=$env:PKG_VERSION" -d "BinDir=target/${{ matrix.target }}/release" -d "RepoDir=$PWD" packaging/windows/rustman.wxs -o "dist/rustman-$env:LABEL-x64.msi"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Remove-Item dist/*.wixpdb -ErrorAction SilentlyContinue
 
       - uses: actions/upload-artifact@v4
         with:
@@ -76,11 +116,14 @@ jobs:
           path: dist/*
           if-no-files-found: error
 
-  release:
-    name: Publish release
+  publish:
+    name: Publish
     needs: build
-    if: github.ref_type == 'tag'
+    if: github.event_name == 'push'
     runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
     steps:
       - uses: actions/download-artifact@v4
         with:
@@ -88,13 +131,28 @@ jobs:
           merge-multiple: true
       - name: Checksums
         run: cd dist && sha256sum * > SHA256SUMS.txt && cat SHA256SUMS.txt
-      - name: Create or update the release
-        env:
-          GH_TOKEN: ${{ github.token }}
-          GH_REPO: ${{ github.repository }}
+
+      - name: Release (tag)
+        if: github.ref_type == 'tag'
         run: |
           if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
             gh release upload "$GITHUB_REF_NAME" dist/* --clobber
           else
             gh release create "$GITHUB_REF_NAME" dist/* --title "Rustman $GITHUB_REF_NAME" --generate-notes
+          fi
+
+      - name: Nightly (main)
+        if: github.ref == 'refs/heads/main'
+        run: |
+          # Point the nightly tag at this commit (tags pushed with GITHUB_TOKEN trigger no workflow).
+          gh api -X PATCH "repos/$GH_REPO/git/refs/tags/nightly" -f sha="$GITHUB_SHA" -F force=true >/dev/null 2>&1 \
+            || gh api -X POST "repos/$GH_REPO/git/refs" -f ref=refs/tags/nightly -f sha="$GITHUB_SHA" >/dev/null
+          notes="Automatic build of the latest commit on main ([${GITHUB_SHA::7}](https://github.com/$GH_REPO/commit/$GITHUB_SHA)), $(date -u '+%Y-%m-%d %H:%M UTC').
+
+          Not a stable release: it is rebuilt on every push, and the file names stay the same so download links keep working. For stable versions, see the releases tagged v*."
+          if gh release view nightly >/dev/null 2>&1; then
+            gh release upload nightly dist/* --clobber
+            gh release edit nightly --prerelease --latest=false --notes "$notes"
+          else
+            gh release create nightly dist/* --prerelease --latest=false --title "Nightly" --notes "$notes"
           fi
