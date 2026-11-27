@@ -13,6 +13,7 @@ struct Flags {
     cancel: bool,
     history: bool,
     clear: bool,
+    save_example: bool,
     toast: Option<String>,
 }
 
@@ -101,6 +102,9 @@ impl RustmanApp {
                                 ui.close();
                             }
                         });
+                        if pm::text_button(ui, Some(icons::FILE_TEXT), "Save as Example", false).on_hover_text("Keep this response as an example of the request (used by mock servers)").clicked() {
+                            flags.save_example = true;
+                        }
                         if pm::text_button(ui, Some(icons::FLOPPY_DISK), "Save Response", false).clicked()
                             && let Some(path) = rfd::FileDialog::new().set_file_name(suggest_file_name(d)).save_file() {
                                 flags.toast = Some(match std::fs::write(&path, &d.body) {
@@ -258,6 +262,9 @@ impl RustmanApp {
         if flags.clear {
             self.tabs[i].state = TabState::Idle;
         }
+        if flags.save_example {
+            self.save_response_as_example(i);
+        }
         if flags.history {
             self.sidebar_visible = true;
             self.sidebar_mode = SidebarMode::History;
@@ -265,6 +272,28 @@ impl RustmanApp {
         if let Some(t) = flags.toast {
             self.notify(t);
         }
+    }
+}
+
+impl RustmanApp {
+    /// Adds the tab's last response as an example of its request. When the request is saved in a
+    /// collection, the saved copy gets it too, so it does not show as an unsaved change.
+    fn save_response_as_example(&mut self, i: usize) {
+        let Some(tab) = self.tabs.get(i) else { return };
+        let TabState::Done(view) = &tab.state else { return };
+        let example = super::examples::example_from_response(&tab.request, &view.data, tab.request.name.clone());
+        let (rid, collection, eid) = (tab.request.id, tab.collection, example.id);
+        if let Some(Item::Request(r)) = collection.and_then(|c| self.ws.collection_mut(c)).and_then(|c| find_item_mut(&mut c.items, rid)) {
+            r.examples.push(example.clone());
+        }
+        let tab = &mut self.tabs[i];
+        if let Some(saved) = &mut tab.saved {
+            saved.examples.push(example.clone());
+        }
+        tab.request.examples.push(example);
+        tab.req_section = ReqSection::Examples;
+        tab.example_sel = Some(eid);
+        self.notify(if collection.is_some() { "Saved as example" } else { "Added as example; save the request to keep it" });
     }
 }
 

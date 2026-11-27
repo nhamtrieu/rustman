@@ -14,6 +14,7 @@ mod oauth2;
 mod model;
 mod openapi;
 mod pm;
+mod postman_api;
 mod run;
 mod script;
 mod sign;
