@@ -637,7 +637,7 @@ fn prepare_send(spec: SendSpec) -> Result<Prepared, String> {
     if !has(&headers, "user-agent") {
         headers.push(("User-Agent".into(), concat!("Rustman/", env!("CARGO_PKG_VERSION")).into()));
     }
-    Ok(Prepared { method, url, headers, body, settings: RequestSettings::default() })
+    Ok(Prepared { method, url, headers, body, settings: RequestSettings::default(), digest: None })
 }
 
 #[cfg(test)]

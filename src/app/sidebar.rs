@@ -608,15 +608,19 @@ fn items_rows(ui: &mut Ui, tc: &mut TreeCtx, coll: Uuid, items: &[Item], depth: 
                     tc.actions.push(TreeAction::NewRequest { collection: coll, folder: Some(fid) });
                 }
                 let menu = |ui: &mut Ui, actions: &mut Vec<TreeAction>| {
-                    let items: [(&str, TreeAction); 5] = [
+                    let edit = |section| TreeAction::EditFolder { collection: coll, folder: fid, section };
+                    let items: [(&str, TreeAction); 8] = [
                         ("Add request", TreeAction::NewRequest { collection: coll, folder: Some(fid) }),
                         ("Add folder", TreeAction::NewFolder { collection: coll, folder: Some(fid) }),
+                        ("Edit", edit(CollSection::Overview)),
+                        ("Authorization", edit(CollSection::Auth)),
+                        ("Scripts", edit(CollSection::Scripts)),
                         ("Rename", TreeAction::Rename(RenameTarget::Item { collection: coll, item: fid })),
                         ("Duplicate", TreeAction::Duplicate { collection: coll, item: fid }),
                         ("Delete", TreeAction::Delete(Confirm::DeleteItem { collection: coll, item: fid })),
                     ];
                     for (label, action) in items {
-                        if label == "Rename" || label == "Delete" {
+                        if label == "Edit" || label == "Rename" || label == "Delete" {
                             ui.separator();
                         }
                         let text = if label == "Delete" { RichText::new(label).color(p.danger) } else { RichText::new(label) };

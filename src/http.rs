@@ -16,6 +16,8 @@ pub struct Prepared {
     pub headers: Vec<(String, String)>,
     pub body: PreparedBody,
     pub settings: RequestSettings,
+    /// Digest auth (username, password): answer the server's 401 challenge and send again.
+    pub digest: Option<(String, String)>,
 }
 
 #[derive(Clone, Debug)]
@@ -101,8 +103,23 @@ pub fn prepare(req: &Request, vars: &VarMap, inherited_auth: Option<&Auth>) -> R
         .map(|h| (sub(h.key.trim()), sub(&h.value)))
         .collect();
 
+    let mut digest = None;
+    let mut aws = None;
     if let Some(auth) = effective_auth(&req.auth, inherited_auth) {
         match auth.kind {
+            // Both need the final headers and body, so they are applied further down / at send time.
+            AuthKind::Digest if !has_header(&headers, "authorization") => {
+                digest = Some((sub(&auth.digest_username), sub(&auth.digest_password)));
+            }
+            AuthKind::AwsSigV4 if !has_header(&headers, "authorization") => {
+                aws = Some(crate::sign::AwsCredentials {
+                    access_key: sub(&auth.aws_access_key),
+                    secret_key: sub(&auth.aws_secret_key),
+                    region: sub(&auth.aws_region),
+                    service: sub(&auth.aws_service),
+                    session_token: sub(&auth.aws_session_token),
+                });
+            }
             AuthKind::Bearer if !has_header(&headers, "authorization") => {
                 headers.push(("Authorization".into(), format!("Bearer {}", sub(&auth.bearer_token))));
             }
@@ -206,7 +223,19 @@ pub fn prepare(req: &Request, vars: &VarMap, inherited_auth: Option<&Auth>) -> R
         headers.push(("Accept".into(), "*/*".into()));
     }
 
-    Ok(Prepared { method: req.method, url, headers, body, settings: req.settings.clone() })
+    if let Some(creds) = aws {
+        let payload_hash = match &body {
+            PreparedBody::None => crate::sign::sha256_hex(b""),
+            PreparedBody::Bytes(b) => crate::sign::sha256_hex(b),
+            PreparedBody::File(path) => crate::sign::sha256_hex(&std::fs::read(path).map_err(|e| format!("Cannot read file '{path}': {e}"))?),
+            // The multipart boundary is only chosen when sending.
+            PreparedBody::Multipart(_) => crate::sign::UNSIGNED_PAYLOAD.to_string(),
+        };
+        let amz_date = chrono::Utc::now().format("%Y%m%dT%H%M%SZ").to_string();
+        crate::sign::aws_sign(req.method.as_str(), &url, &mut headers, &payload_hash, &creds, &amz_date)?;
+    }
+
+    Ok(Prepared { method: req.method, url, headers, body, settings: req.settings.clone(), digest })
 }
 
 /// Percent-encode for query components.
@@ -348,36 +377,31 @@ pub async fn execute_with(p: Prepared, jar: Arc<reqwest::cookie::Jar>, net: &Net
     builder = apply_network(builder, net, &p.url)?;
     let client = builder.build().map_err(|e| format!("Cannot build HTTP client: {e}"))?;
 
-    let mut rb = client.request(to_reqwest_method(p.method), &p.url);
-    for (k, v) in &p.headers {
-        rb = rb.header(k, v);
-    }
-    rb = match p.body {
-        PreparedBody::None => rb,
-        PreparedBody::Bytes(b) => rb.body(b),
-        PreparedBody::File(path) => {
-            let data = tokio::fs::read(&path).await.map_err(|e| format!("Cannot read file '{path}': {e}"))?;
-            rb.body(data)
-        }
-        PreparedBody::Multipart(parts) => {
-            let mut form = reqwest::multipart::Form::new();
-            for part in parts {
-                if part.is_file {
-                    let path = part.value.clone();
-                    let p = reqwest::multipart::Part::file(&path)
-                        .await
-                        .map_err(|e| format!("Cannot read file '{path}': {e}"))?;
-                    form = form.part(part.name, p);
-                } else {
-                    form = form.text(part.name, part.value);
-                }
-            }
-            rb.multipart(form)
-        }
+    let body = match &p.body {
+        PreparedBody::File(path) => PreparedBody::Bytes(tokio::fs::read(path).await.map_err(|e| format!("Cannot read file '{path}': {e}"))?),
+        other => other.clone(),
     };
-
     let start = Instant::now();
-    let resp = rb.send().await.map_err(describe_error)?;
+    let mut resp = send_once(&client, p.method, &p.url, &p.headers, &body).await?;
+
+    // Digest: the first answer is a 401 with the challenge; answer it once.
+    if let Some((user, pass)) = &p.digest
+        && resp.status() == reqwest::StatusCode::UNAUTHORIZED
+        && let Some(ch) = crate::sign::parse_digest_challenge(resp.headers().get_all(reqwest::header::WWW_AUTHENTICATE).iter().filter_map(|v| v.to_str().ok()))
+    {
+        let url = resp.url().clone();
+        let uri = match url.query() {
+            Some(q) => format!("{}?{q}", url.path()),
+            None => url.path().to_string(),
+        };
+        let raw: &[u8] = if let PreparedBody::Bytes(b) = &body { b } else { &[] };
+        let mut nonce = [0u8; 16];
+        let _ = getrandom::fill(&mut nonce);
+        let header = crate::sign::digest_authorization(&ch, user, pass, p.method.as_str(), &uri, raw, &crate::sign::hex(&nonce), 1);
+        let mut headers = p.headers.clone();
+        headers.push(("Authorization".into(), header));
+        resp = send_once(&client, p.method, url.as_str(), &headers, &body).await?;
+    }
     let status = resp.status();
     let http_version = format!("{:?}", resp.version());
     let final_url = resp.url().to_string();
@@ -417,6 +441,32 @@ pub async fn execute_with(p: Prepared, jar: Arc<reqwest::cookie::Jar>, net: &Net
         duration,
         remote_addr,
     })
+}
+
+/// One HTTP exchange. `body` is never `File` here (read once by the caller), so it can be resent.
+async fn send_once(client: &reqwest::Client, method: Method, url: &str, headers: &[(String, String)], body: &PreparedBody) -> Result<reqwest::Response, String> {
+    let mut rb = client.request(to_reqwest_method(method), url);
+    for (k, v) in headers {
+        rb = rb.header(k, v);
+    }
+    rb = match body {
+        PreparedBody::None | PreparedBody::File(_) => rb,
+        PreparedBody::Bytes(b) => rb.body(b.clone()),
+        PreparedBody::Multipart(parts) => {
+            let mut form = reqwest::multipart::Form::new();
+            for part in parts {
+                if part.is_file {
+                    let path = part.value.clone();
+                    let p = reqwest::multipart::Part::file(&path).await.map_err(|e| format!("Cannot read file '{path}': {e}"))?;
+                    form = form.part(part.name.clone(), p);
+                } else {
+                    form = form.text(part.name.clone(), part.value.clone());
+                }
+            }
+            rb.multipart(form)
+        }
+    };
+    rb.send().await.map_err(describe_error)
 }
 
 fn describe_error(e: reqwest::Error) -> String {
@@ -462,6 +512,60 @@ pub fn human_duration(d: Duration) -> String {
 mod tests {
     use super::*;
     use crate::model::{KeyValue, RawLang};
+
+    #[test]
+    fn prepare_signs_aws_requests() {
+        let mut req = Request { url: "https://abc.execute-api.eu-west-1.amazonaws.com/prod/items".into(), method: Method::Post, ..Default::default() };
+        req.body.mode = BodyMode::Raw;
+        req.body.raw = r#"{"id":1}"#.into();
+        let folder = Auth { kind: AuthKind::AwsSigV4, aws_access_key: "{{ak}}".into(), aws_secret_key: "sk".into(), aws_region: "eu-west-1".into(), aws_service: "execute-api".into(), ..Default::default() };
+        let vars = crate::vars::build_vars(&[&[KeyValue::new("ak", "AKID")]]);
+        let p = prepare(&req, &vars, Some(&folder)).unwrap();
+        let get = |k: &str| p.headers.iter().find(|(n, _)| n.eq_ignore_ascii_case(k)).map(|(_, v)| v.clone()).unwrap_or_default();
+        assert!(get("authorization").starts_with("AWS4-HMAC-SHA256 Credential=AKID/"), "{}", get("authorization"));
+        assert!(get("authorization").contains("/eu-west-1/execute-api/aws4_request, SignedHeaders=content-type;host;x-amz-content-sha256;x-amz-date,"));
+        assert_eq!(get("x-amz-content-sha256"), crate::sign::sha256_hex(br#"{"id":1}"#));
+        assert_eq!(get("x-amz-date").len(), 16);
+
+        // A hand-written Authorization header wins, like the other auth types.
+        req.headers.push(KeyValue::new("Authorization", "mine"));
+        let p = prepare(&req, &vars, Some(&folder)).unwrap();
+        assert!(!p.headers.iter().any(|(k, _)| k.eq_ignore_ascii_case("x-amz-date")));
+    }
+
+    #[test]
+    fn digest_auth_answers_the_challenge() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let listener = rt.block_on(tokio::net::TcpListener::bind("127.0.0.1:0")).unwrap();
+        let url = format!("http://{}/secret?x=1", listener.local_addr().unwrap());
+        const CHALLENGE: &str = r#"Digest realm="api", qop="auth", nonce="abc123", opaque="op", algorithm=MD5"#;
+        rt.spawn(async move {
+            loop {
+                let Ok((mut sock, _)) = listener.accept().await else { return };
+                let mut buf = vec![0u8; 8192];
+                let n = sock.read(&mut buf).await.unwrap_or(0);
+                let req = String::from_utf8_lossy(&buf[..n]).to_string();
+                let auth = req.lines().find_map(|l| l.split_once(':').filter(|(k, _)| k.eq_ignore_ascii_case("authorization")).map(|(_, v)| v.trim().to_string()));
+                let resp = match auth {
+                    // Check the answer against our own computation with the client's cnonce.
+                    Some(a) => {
+                        let cnonce = a.split("cnonce=\"").nth(1).and_then(|r| r.split('"').next()).unwrap_or("");
+                        let ch = crate::sign::parse_digest_challenge([CHALLENGE]).unwrap();
+                        let expected = crate::sign::digest_authorization(&ch, "u", "p w", "GET", "/secret?x=1", b"", cnonce, 1);
+                        if a == expected { "HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok".to_string() } else { format!("HTTP/1.1 403 Forbidden\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{a}", a.len()) }
+                    }
+                    None => format!("HTTP/1.1 401 Unauthorized\r\nWWW-Authenticate: {CHALLENGE}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"),
+                };
+                let _ = sock.write_all(resp.as_bytes()).await;
+            }
+        });
+        let req = Request { url, auth: Auth { kind: AuthKind::Digest, digest_username: "u".into(), digest_password: "p w".into(), ..Default::default() }, ..Default::default() };
+        let p = prepare(&req, &VarMap::new(), None).unwrap();
+        assert!(!p.headers.iter().any(|(k, _)| k.eq_ignore_ascii_case("authorization")), "sent without auth first");
+        let r = rt.block_on(execute_with(p, Arc::new(reqwest::cookie::Jar::default()), &NetSettings { system_proxy: false, ..Default::default() })).unwrap();
+        assert_eq!((r.status, r.text()), (200, "ok".to_string()));
+    }
 
     #[test]
     fn prepare_applies_vars_auth_and_content_type() {
@@ -570,7 +674,7 @@ mod tests {
             ..Default::default()
         };
         let get = |url: &str, net: &NetSettings| {
-            let p = Prepared { method: Method::Get, url: url.into(), headers: vec![], body: PreparedBody::None, settings: RequestSettings { timeout_ms: 5000, ..Default::default() } };
+            let p = Prepared { method: Method::Get, url: url.into(), headers: vec![], body: PreparedBody::None, settings: RequestSettings { timeout_ms: 5000, ..Default::default() }, digest: None };
             rt.block_on(execute_with(p, Arc::new(reqwest::cookie::Jar::default()), net))
         };
 
@@ -662,7 +766,7 @@ mod tests {
         let rt = tokio::runtime::Runtime::new().unwrap();
         let url = format!("https://localhost:{port}/");
         let get = |net: &NetSettings| {
-            let p = Prepared { method: Method::Get, url: url.clone(), headers: vec![], body: PreparedBody::None, settings: RequestSettings { timeout_ms: 5000, ..Default::default() } };
+            let p = Prepared { method: Method::Get, url: url.clone(), headers: vec![], body: PreparedBody::None, settings: RequestSettings { timeout_ms: 5000, ..Default::default() }, digest: None };
             rt.block_on(execute_with(p, Arc::new(reqwest::cookie::Jar::default()), net))
         };
         let ca_only = NetSettings { ca_enabled: true, ca_path: f("ca.pem"), ..Default::default() };

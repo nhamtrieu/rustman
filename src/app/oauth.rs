@@ -16,6 +16,7 @@ pub(super) enum OAuthTarget {
     /// A request open in a tab (and its saved copy in `collection`, if any).
     Request { request: Uuid, collection: Option<Uuid> },
     Collection(Uuid),
+    Folder { collection: Uuid, folder: Uuid },
 }
 
 pub(super) struct OAuthJob {
@@ -43,6 +44,10 @@ impl RustmanApp {
                 self.tabs.iter().find(|t| t.request.id == request).map(|t| (t.request.auth.clone(), t.collection, t.request.settings.clone()))
             }
             OAuthTarget::Collection(c) => self.ws.collection(c).map(|c| (c.auth.clone(), Some(c.id), RequestSettings::default())),
+            OAuthTarget::Folder { collection, folder } => match self.ws.collection(collection).and_then(|c| find_item(&c.items, folder)) {
+                Some(Item::Folder(f)) => Some((f.auth.clone(), Some(collection), RequestSettings::default())),
+                _ => None,
+            },
         }
     }
 
@@ -129,6 +134,11 @@ impl RustmanApp {
                     c.auth.oauth2.set_token(token);
                 }
             }
+            OAuthTarget::Folder { collection, folder } => {
+                if let Some(a) = self.ws.collection_mut(collection).and_then(|c| c.auth_mut(AuthOwner::Folder(folder))) {
+                    a.oauth2.set_token(token);
+                }
+            }
             OAuthTarget::Request { request, collection } => {
                 for tab in self.tabs.iter_mut().filter(|t| t.request.id == request) {
                     tab.request.auth.oauth2.set_token(token);
@@ -147,13 +157,11 @@ impl RustmanApp {
 
     /// Stores a token refreshed automatically while sending a request.
     pub(super) fn apply_token_update(&mut self, update: &exec::TokenUpdate, collection: Option<Uuid>) {
-        let target = if update.inherited {
-            match collection {
-                Some(c) => OAuthTarget::Collection(c),
-                None => return,
-            }
-        } else {
-            OAuthTarget::Request { request: update.request, collection }
+        let target = match (update.owner, collection) {
+            (None, _) => OAuthTarget::Request { request: update.request, collection },
+            (Some(AuthOwner::Collection), Some(c)) => OAuthTarget::Collection(c),
+            (Some(AuthOwner::Folder(folder)), Some(c)) => OAuthTarget::Folder { collection: c, folder },
+            (Some(_), None) => return,
         };
         self.apply_token(target, &update.token);
     }

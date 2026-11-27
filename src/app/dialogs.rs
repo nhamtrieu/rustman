@@ -27,6 +27,7 @@ fn select_button(ui: &mut Ui, label: &str, width: f32) -> egui::Response {
 impl RustmanApp {
     pub(super) fn windows(&mut self, ctx: &egui::Context) {
         self.collection_window(ctx);
+        self.folder_window(ctx);
         self.save_as_window(ctx);
         self.import_window(ctx);
         self.oauth_window(ctx);
@@ -98,6 +99,72 @@ impl RustmanApp {
         self.coll_editor = if open { Some((id, section)) } else { None };
         if let Some(op) = oauth_op {
             self.start_oauth(OAuthTarget::Collection(id), op, ctx);
+        }
+    }
+
+    /// Folder settings: name and description, auth for the requests below, folder scripts.
+    fn folder_window(&mut self, ctx: &egui::Context) {
+        let Some((cid, fid, mut section)) = self.folder_editor else { return };
+        if section == CollSection::Variables {
+            section = CollSection::Overview;
+        }
+        let vars = self.vars_for(Some(cid));
+        // What the folder itself would get with "Inherit auth from parent".
+        let parent = self.ws.collection(cid).map(|c| {
+            let (owner, auth) = c.inherited_auth(fid);
+            (auth.clone(), c.owner_label(owner))
+        });
+        let script_phase = &mut self.coll_script_phase;
+        let Some(Item::Folder(f)) = self.ws.collection_mut(cid).and_then(|c| find_item_mut(&mut c.items, fid)) else {
+            self.folder_editor = None;
+            return;
+        };
+        let mut open = true;
+        let mut oauth_op = None;
+        egui::Window::new(RichText::new(f.name.clone()).font(semibold(15.0)))
+            .id(Id::unique("folder_window"))
+            .open(&mut open)
+            .default_size([860.0, 480.0])
+            .resizable(true)
+            .show(ctx, |ui| {
+                let p = pal(ui);
+                ui.horizontal(|ui| {
+                    ui.spacing_mut().item_spacing.x = 2.0;
+                    for (s, l) in [(CollSection::Overview, "Overview"), (CollSection::Auth, "Authorization"), (CollSection::Scripts, "Scripts")] {
+                        if pm::pill_tab(ui, None, l, None, false, section == s).clicked() {
+                            section = s;
+                        }
+                    }
+                });
+                ui.add_space(10.0);
+                if section == CollSection::Scripts {
+                    ui.label(RichText::new("These scripts run for every request in this folder, after the collection's scripts and before the request's own.").color(p.text2).font(regular(13.0)));
+                    ui.add_space(8.0);
+                    let size = vec2(ui.available_width(), ui.available_height().max(300.0));
+                    ui.allocate_ui(size, |ui| {
+                        super::request::scripts_editor(ui, Id::unique(("folder_scripts", fid)), &mut f.pre_request_script, &mut f.post_response_script, script_phase);
+                    });
+                    return;
+                }
+                egui::ScrollArea::vertical().show(ui, |ui| match section {
+                    CollSection::Overview | CollSection::Variables | CollSection::Scripts => {
+                        field_label(ui, "Name");
+                        pm::input(ui, Id::unique(("folder_name", fid)), &mut f.name, &vars, "Folder name", 420.0);
+                        ui.add_space(10.0);
+                        field_label(ui, "Description");
+                        ui.add(egui::TextEdit::multiline(&mut f.description).hint_text("Add a description").desired_rows(8).desired_width(f32::INFINITY));
+                    }
+                    CollSection::Auth => {
+                        ui.label(RichText::new("This authorization method will be used for every request in this folder that inherits auth from its parent.").color(p.text2).font(regular(13.0)));
+                        ui.add_space(10.0);
+                        let inherited = parent.as_ref().map(|(a, from)| (a, from.as_str()));
+                        oauth_op = super::request::auth_form(ui, Id::unique(("folder_auth", fid)), &mut f.auth, &vars, true, inherited).oauth;
+                    }
+                });
+            });
+        self.folder_editor = if open { Some((cid, fid, section)) } else { None };
+        if let Some(op) = oauth_op {
+            self.start_oauth(OAuthTarget::Folder { collection: cid, folder: fid }, op, ctx);
         }
     }
 

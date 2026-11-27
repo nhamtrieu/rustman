@@ -195,10 +195,10 @@ impl RustmanApp {
         let p = pal(ui);
         let i = self.active;
         let vars = self.vars_for(self.tabs[i].collection);
-        let inherited = self.inherited_auth(self.tabs[i].collection);
+        let inherited = self.inherited_auth(self.tabs[i].collection, self.tabs[i].request.id);
         let auto_headers: Vec<(String, String)> = {
             let tab = &self.tabs[i];
-            http::prepare(&tab.request, &vars, inherited.as_ref())
+            http::prepare(&tab.request, &vars, inherited.as_ref().map(|(a, _)| a))
                 .map(|prep| {
                     prep.headers
                         .into_iter()
@@ -261,7 +261,7 @@ impl RustmanApp {
                 }
             }
             ReqSection::Auth => {
-                oauth_op = auth_form(ui, base.with("auth"), &mut tab.request.auth, &vars, true, inherited.as_ref()).oauth;
+                oauth_op = auth_form(ui, base.with("auth"), &mut tab.request.auth, &vars, true, inherited.as_ref().map(|(a, from)| (a, from.as_str()))).oauth;
             }
             ReqSection::Headers => {
                 ui.horizontal(|ui| {
@@ -300,20 +300,20 @@ impl RustmanApp {
 // Authorization
 // ---------------------------------------------------------------------------
 
-fn auth_description(kind: AuthKind, inherited: Option<&Auth>) -> String {
+fn auth_description(kind: AuthKind, inherited: Option<(&Auth, &str)>) -> String {
     match kind {
-        AuthKind::Inherit => match inherited.map(|a| a.kind) {
-            Some(k) if !matches!(k, AuthKind::None | AuthKind::Inherit) => {
-                format!("This request is using {} from the collection.", k.label())
-            }
-            Some(_) => "This request is using No Auth from the collection.".into(),
-            None => "This request is not inheriting any authorization helper at the moment. Save it in a collection to use the collection's authorization.".into(),
+        AuthKind::Inherit => match inherited {
+            Some((a, from)) if !matches!(a.kind, AuthKind::None | AuthKind::Inherit) => format!("This request is using {} from {from}.", a.kind.label()),
+            Some((_, from)) => format!("This request is using No Auth from {from}."),
+            None => "This request is not inheriting any authorization helper at the moment. Save it in a collection to use the authorization of its collection or folder.".into(),
         },
         AuthKind::None => "This request does not use any authorization.".into(),
         AuthKind::Bearer => "The authorization header will be automatically generated when you send the request.".into(),
         AuthKind::Basic => "The authorization header will be automatically generated when you send the request.".into(),
         AuthKind::ApiKey => "The key-value pair will be added as a header or query parameter when you send the request.".into(),
         AuthKind::OAuth2 => "The current access token is added to the request when you send it. Configure the authorization server and click Get New Access Token to sign in and fetch one.".into(),
+        AuthKind::AwsSigV4 => "The request is signed with AWS Signature Version 4 when you send it: Authorization, X-Amz-Date and X-Amz-Content-Sha256 headers are added.".into(),
+        AuthKind::Digest => "The request is sent once to get the server's Digest challenge, then sent again with the computed Authorization header.".into(),
     }
 }
 
@@ -506,14 +506,15 @@ fn oauth2_form(ui: &mut Ui, id: Id, o: &mut OAuth2, vars: &VarMap, out: &mut Aut
 }
 
 /// Postman's two-column authorization form. Also used by the collection editor.
-pub(super) fn auth_form(ui: &mut Ui, id: Id, auth: &mut Auth, vars: &VarMap, allow_inherit: bool, inherited: Option<&Auth>) -> AuthFormOut {
+/// `inherited`: the auth a request or folder set to `Inherit` would use, and where it comes from.
+pub(super) fn auth_form(ui: &mut Ui, id: Id, auth: &mut Auth, vars: &VarMap, allow_inherit: bool, inherited: Option<(&Auth, &str)>) -> AuthFormOut {
     let p = pal(ui);
     let mut changed = false;
     let mut out = AuthFormOut::default();
     let kinds: &[AuthKind] = if allow_inherit {
-        &[AuthKind::Inherit, AuthKind::None, AuthKind::Bearer, AuthKind::Basic, AuthKind::ApiKey, AuthKind::OAuth2]
+        &[AuthKind::Inherit, AuthKind::None, AuthKind::Bearer, AuthKind::Basic, AuthKind::ApiKey, AuthKind::Digest, AuthKind::OAuth2, AuthKind::AwsSigV4]
     } else {
-        &[AuthKind::None, AuthKind::Bearer, AuthKind::Basic, AuthKind::ApiKey, AuthKind::OAuth2]
+        &[AuthKind::None, AuthKind::Bearer, AuthKind::Basic, AuthKind::ApiKey, AuthKind::Digest, AuthKind::OAuth2, AuthKind::AwsSigV4]
     };
     let left_w = 300.0f32.min(ui.available_width() * 0.4);
     ui.horizontal_top(|ui| {
@@ -565,6 +566,17 @@ pub(super) fn auth_form(ui: &mut Ui, id: Id, auth: &mut Auth, vars: &VarMap, all
                     changed |= field(ui, "Password", &mut auth.basic_password, "pass", "Password");
                 }
                 AuthKind::OAuth2 => oauth2_form(ui, id.with("oauth2"), &mut auth.oauth2, vars, &mut out),
+                AuthKind::Digest => {
+                    changed |= field(ui, "Username", &mut auth.digest_username, "dig_user", "Username");
+                    changed |= field(ui, "Password", &mut auth.digest_password, "dig_pass", "Password");
+                }
+                AuthKind::AwsSigV4 => {
+                    changed |= field(ui, "AccessKey", &mut auth.aws_access_key, "aws_ak", "Access key ID");
+                    changed |= field(ui, "SecretKey", &mut auth.aws_secret_key, "aws_sk", "Secret access key");
+                    changed |= field(ui, "AWS Region", &mut auth.aws_region, "aws_region", "us-east-1");
+                    changed |= field(ui, "Service Name", &mut auth.aws_service, "aws_service", "execute-api, s3, ...");
+                    changed |= field(ui, "Session Token", &mut auth.aws_session_token, "aws_token", "Optional, for temporary credentials");
+                }
                 AuthKind::ApiKey => {
                     changed |= field(ui, "Key", &mut auth.api_key_name, "k", "Key");
                     changed |= field(ui, "Value", &mut auth.api_key_value, "v", "Value");

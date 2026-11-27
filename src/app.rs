@@ -302,6 +302,7 @@ enum TreeAction {
     DuplicateCollection(Uuid),
     Delete(Confirm),
     EditCollection(Uuid, CollSection),
+    EditFolder { collection: Uuid, folder: Uuid, section: CollSection },
     Export(Uuid),
     Run(Uuid),
     MoveInto { drag: DragItem, collection: Uuid, folder: Option<Uuid> },
@@ -375,6 +376,8 @@ pub struct RustmanApp {
     run_tx: mpsc::Sender<runner::RunMsg>,
     run_rx: mpsc::Receiver<runner::RunMsg>,
     coll_editor: Option<(Uuid, CollSection)>,
+    /// Folder settings window: (collection, folder, section). `Variables` is not used for folders.
+    folder_editor: Option<(Uuid, Uuid, CollSection)>,
     coll_script_phase: ScriptPhase,
     rename: Option<(RenameTarget, String)>,
     rename_focus: bool,
@@ -438,6 +441,7 @@ impl RustmanApp {
             run_tx,
             run_rx,
             coll_editor: None,
+            folder_editor: None,
             coll_script_phase: ScriptPhase::Pre,
             rename: None,
             rename_focus: false,
@@ -515,8 +519,11 @@ impl RustmanApp {
         build_vars(&[&self.ws.globals, coll_vars, env_vars])
     }
 
-    fn inherited_auth(&self, collection: Option<Uuid>) -> Option<Auth> {
-        collection.and_then(|c| self.ws.collection(c)).map(|c| c.auth.clone())
+    /// The auth a request with `Inherit` uses (from its folders or collection), and where it comes from.
+    fn inherited_auth(&self, collection: Option<Uuid>, request: Uuid) -> Option<(Auth, String)> {
+        let c = collection.and_then(|c| self.ws.collection(c))?;
+        let (owner, auth) = c.inherited_auth(request);
+        Some((auth.clone(), c.owner_label(owner)))
     }
 
     // -----------------------------------------------------------------------
@@ -719,15 +726,12 @@ impl RustmanApp {
     fn job_for(&self, request: &Request, collection: Option<Uuid>, data: &[KeyValue], info: script::Info) -> exec::Job {
         let coll = collection.and_then(|c| self.ws.collection(c));
         let env = self.ws.active_env();
-        let mut scripts = Vec::new();
-        if let Some(c) = coll {
-            scripts.push(exec::ScriptSet { label: "Collection", pre: c.pre_request_script.clone(), post: c.post_response_script.clone() });
-        }
-        scripts.push(exec::ScriptSet { label: "Request", pre: request.pre_request_script.clone(), post: request.post_response_script.clone() });
+        let (scripts, auth, auth_owner) = exec::context(coll, request);
         exec::Job {
             request: request.clone(),
             scripts,
-            auth: coll.map(|c| c.auth.clone()),
+            auth,
+            auth_owner,
             scopes: Scopes::new(&self.ws.globals, coll.map(|c| &c.variables[..]).unwrap_or(&[]), env.map(|e| &e.variables[..]), data),
             environment_name: env.map(|e| e.name.clone()),
             info,
@@ -1046,6 +1050,7 @@ impl RustmanApp {
                 self.tree_anchor = None;
             }
             TreeAction::EditCollection(id, section) => self.coll_editor = Some((id, section)),
+            TreeAction::EditFolder { collection, folder, section } => self.folder_editor = Some((collection, folder, section)),
             TreeAction::Export(id) => self.export_collection(id),
             TreeAction::Run(id) => self.open_runner(id),
             TreeAction::MoveInto { drag, collection, folder } => {
@@ -1269,6 +1274,11 @@ impl RustmanApp {
                 }
                 Ok("collection") => self.coll_editor = self.ws.collections.first().map(|c| (c.id, CollSection::Variables)),
                 Ok("collection_scripts") => self.coll_editor = self.ws.collections.first().map(|c| (c.id, CollSection::Scripts)),
+                Ok("folder_auth") => {
+                    self.folder_editor = self.ws.collections.iter().find_map(|c| {
+                        c.items.iter().find_map(|i| if let Item::Folder(f) = i { Some((c.id, f.id, CollSection::Auth)) } else { None })
+                    })
+                }
                 Ok("import") => self.import = Some(ImportState { text: String::new(), error: None }),
                 Ok("code") => self.right_panel = Some(RightPanel::Code),
                 Ok("cookies") => self.cookies_open = true,

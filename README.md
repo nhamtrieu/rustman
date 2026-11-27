@@ -30,28 +30,28 @@ scripts/install-desktop.sh --uninstall
 
 - **Request**: GET/POST/PUT/PATCH/DELETE/HEAD/OPTIONS, query params đồng bộ hai chiều với URL, headers, nhiều tab (chuột phải vào tab: New Request, Duplicate Tab, Close / Force Close Tab, Close Other Tabs, Close All Tabs, Force Close All Tabs).
 - **Body**: raw (JSON có tô màu, kiểm tra lỗi và Beautify; Text/XML/HTML/JS), x-www-form-urlencoded, form-data (text + file), binary, GraphQL.
-- **Auth**: Bearer, Basic, API Key (header/query), OAuth 2.0, "Inherit auth from parent" lấy auth của collection.
+- **Auth**: Bearer, Basic, API Key (header/query), Digest (tự trả lời challenge 401; MD5, SHA-256, `-sess`), OAuth 2.0, AWS Signature v4 (kể cả session token cho credentials tạm thời), "Inherit auth from parent" lấy auth của folder gần nhất hoặc của collection.
 - **OAuth 2.0** (request hoặc collection): grant Authorization Code, Authorization Code (PKCE, SHA-256/plain), Implicit, Password Credentials, Client Credentials. Nút *Get New Access Token* mở trình duyệt; nếu Callback URL là `http://localhost:<port>` hoặc `127.0.0.1` thì Rustman tự bắt redirect, nếu không thì dán URL trình duyệt chuyển tới vào hộp thoại. Gửi client credentials bằng Basic header hoặc trong body; có Scope, State, Audience, Resource, Refresh Token URL. Token gắn vào header (prefix tuỳ chọn) hoặc query `access_token`; hiện thời hạn, nút *Refresh*/*Clear*, và *Auto-refresh*: token hết hạn được refresh trước khi gửi (cả trong Collection Runner). Request lấy token hiện trong Console. `{{biến}}` dùng được ở mọi ô.
 - **Settings** cho từng request: timeout, follow redirects, verify SSL.
 - **Proxy** (Settings → Proxy): dùng proxy hệ thống (`HTTP_PROXY`, `HTTPS_PROXY`, `NO_PROXY`) hoặc proxy tuỳ chỉnh (host:port, chọn áp dụng cho HTTP và/hoặc HTTPS, Basic auth, danh sách bypass: tên miền, `*.domain`, IP, CIDR; mặc định bỏ qua localhost). Áp dụng cho mọi request: tab, runner, `pm.sendRequest`, OAuth 2.0, MCP.
 - **Certificates** (Settings → Certificates): thêm CA (file PEM, tin cậy thêm ngoài CA có sẵn) và client certificate cho mutual TLS theo host (`api.example.com`, `*.example.com`, có thể kèm `:port`), file CRT + KEY dạng PEM.
-- **Scripts** (tab *Scripts* của request và collection): JavaScript chạy *Pre-request* (trước khi gửi) và *Post-response* (sau khi nhận response), API `pm` tương thích Postman. Script của collection chạy trước script của request. Chi tiết ở mục [Scripts](#scripts).
+- **Scripts** (tab *Scripts* của request, folder và collection): JavaScript chạy *Pre-request* (trước khi gửi) và *Post-response* (sau khi nhận response), API `pm` tương thích Postman. Thứ tự chạy: script của collection, rồi của từng folder chứa request (từ ngoài vào trong), rồi của request. Chi tiết ở mục [Scripts](#scripts).
 - **Test Results**: kết quả `pm.test` (PASS/FAIL/SKIPPED, lọc theo trạng thái) và lỗi script kèm số dòng.
 - **Response**: status/time/size, JSON pretty có tô màu (hiển thị ảo hoá theo dòng, xem được response lớn), Raw, Headers, Cookies, Info, Copy, Save ra file.
-- **Collections**: folder lồng nhau, kéo thả để sắp xếp/di chuyển, rename/duplicate/delete, biến và auth cấp collection.
+- **Collections**: folder lồng nhau, kéo thả để sắp xếp/di chuyển, rename/duplicate/delete, biến, auth và script cấp collection. Folder có mô tả, auth và script riêng (chuột phải folder → *Edit* / *Authorization* / *Scripts*); auth của folder đặt *Inherit* thì lấy tiếp từ cấp trên.
 - **Environments & biến**: `{{var}}` ở mọi chỗ, độ ưu tiên environment > collection > globals; biến động `{{$guid}}`, `{{$timestamp}}`, `{{$isoTimestamp}}`, `{{$randomInt}}`, `{{$randomEmail}}`...; tô xanh/đỏ cho biến đã/chưa định nghĩa, rê chuột để xem giá trị đã thay.
 - **Console** (status bar → Console, hoặc Ctrl+Alt+C): log mọi request đã gửi với URL đã thay biến, request/response headers và body, thời gian, kích thước, lỗi; lọc theo chữ hoặc chỉ lỗi; chuột phải để copy URL/response.
 - **Toolsets (MCP)**: chọn các request đã lưu làm *tool* cho AI agent (Claude Code, Cursor, VS Code…). Rustman chạy một MCP server cục bộ ở `http://localhost:<port>/mcp` (Streamable HTTP). Các `{{biến}}` của request mà agent cần điền trở thành tham số của tool (có mô tả, bắt buộc/không); các biến còn lại lấy giá trị từ environment / collection đang dùng. Nút *Connect* có sẵn lệnh `claude mcp add --transport http …` và JSON config. Có log các lần agent gọi tool.
 - **Terminal** (status bar → Terminal, hoặc Ctrl+\`): shell thật trong PTY (bash/zsh/PowerShell) nằm chung panel với Console. Hỗ trợ màu 16/256/truecolor, phím mũi tên, Ctrl+C/D/Z…, dán (bracketed paste), cuộn lại lịch sử bằng chuột, chương trình toàn màn hình (vim, htop). Ctrl+Shift+C hoặc nút copy để chép màn hình.
 - **Cookie jar** dùng chung giữa các request (Tools → Clear cookies để xoá).
 - **History** của các request đã gửi.
-- **Import**: Postman Collection v2.1 (kể cả script; script của folder được gộp vào các request bên trong), Postman Environment, OpenAPI 3 / Swagger 2 (JSON hoặc YAML, tạo cả spec lẫn collection), lệnh cURL (dán thẳng vào ô URL cũng được).
+- **Import**: Postman Collection v2.1 (kể cả script, auth và mô tả của folder), Postman Environment, OpenAPI 3 / Swagger 2 (JSON hoặc YAML, tạo cả spec lẫn collection), lệnh cURL (dán thẳng vào ô URL cũng được).
 - **Specs**: soạn OpenAPI (YAML/JSON) với danh sách endpoint và báo lỗi cú pháp ngay bên cạnh; nút *Generate Collection* sinh collection (folder theo tag, biến `{{baseUrl}}`, path param thành biến, query/header, body mẫu từ schema).
 - **Mocks**: mock server chạy cục bộ (`http://localhost:<port>`). Mỗi route có method (hoặc ANY), path dạng `/users/:id` hay `/files/*`, status, headers, body, delay. Body/header dùng được `{{id}}` (path param), query param và biến động `{{$guid}}`. Mở CORS sẵn, có log các request gọi tới. Đổi route khi đang chạy thì có hiệu lực ngay.
 - **Datasets**: bảng dữ liệu sửa trực tiếp, import CSV/JSON, export CSV. Tên cột là tên biến.
 - **Collection Runner** (chuột phải collection → *Run collection*): chọn request, số lượt, delay, dataset (lượt n dùng dòng n, cột ghi đè các biến khác). Request chạy tuần tự kèm script: biến do request trước đặt được request sau dùng, `pm.execution.setNextRequest` đổi thứ tự. Một request *Passed* khi mọi test pass (không có test thì khi status < 400); kết quả từng test hiện dưới request. Mọi request và `console.log` cũng được ghi vào Console.
 - **Documents**: ghi chú Markdown (tiêu đề, danh sách, checklist, code block, **đậm**, *nghiêng*, `code`) với chế độ Edit/Preview.
-- **Export**: Postman Collection v2.1 (kể cả script), Postman Environment.
+- **Export**: Postman Collection v2.1 (kể cả script và auth của folder), Postman Environment.
 - **Code snippet** (panel bên phải, có tô màu cú pháp): 34 ngôn ngữ/thư viện — C libcurl, C# HttpClient/RestSharp, cURL, Dart dio/http, Go, HTTP, Java OkHttp/Unirest, JavaScript Fetch/jQuery/XHR, Kotlin OkHttp, NodeJs Axios/Native/Request/Unirest, Objective-C, OCaml, PHP cURL/Guzzle/HTTP_Request2/pecl_http, PowerShell, Python http.client/Requests, R httr/RCurl, Ruby, Rust reqwest, HTTPie, wget, Swift. Tuỳ chọn: thụt lề, follow redirect, dạng option cURL, ký tự nối dòng.
 - Theme sáng/tối, tự lưu workspace.
 
@@ -96,7 +96,7 @@ Script là JavaScript (engine QuickJS, nhúng sẵn), mỗi script chạy trong 
 
 Proxy/certificates chưa hỗ trợ: proxy SOCKS, file PFX/PKCS#12 và private key có mật khẩu (chuyển sang PEM bằng `openssl pkcs12 -in c.pfx -out c.pem -nodes`).
 
-Chưa hỗ trợ: `cheerio`, `csv-parse`, `postman-collection`, module Node khác (`url`, `crypto`, ...), `pm.vault`, script ở cấp folder (khi import được gộp vào request). Toolsets (MCP) gửi request mà không chạy script.
+Chưa hỗ trợ: `cheerio`, `csv-parse`, `postman-collection`, module Node khác (`url`, `crypto`, ...), `pm.vault`. Toolsets (MCP) gửi request mà không chạy script.
 
 ## Phím tắt
 
@@ -134,6 +134,7 @@ Workspace được lưu vào `~/.local/share/rustman/workspace.json` (Linux). Đ
 | `src/script/prelude.js` | API `pm` (biến, request, response, `pm.test`, `pm.expect`, JSON schema, ...) viết bằng JS |
 | `src/script/require.js` | `require()` trong script, các module kiểu Node (`uuid`, `buffer`, `querystring`, `util`, `xml2js`), `crypto.getRandomValues` |
 | `src/script/lib/` | Thư viện JS nhúng sẵn (crypto-js, lodash, moment, tv4, ajv, chai) kèm `LICENSES.md` |
+| `src/sign.rs` | Ký AWS Signature v4, tính header Digest; HMAC-SHA256 và MD5 |
 | `src/import.rs` | Import/export Postman, parse cURL |
 | `src/openapi.rs` | Đọc OpenAPI 3 / Swagger 2, sinh collection |
 | `src/mock.rs` | Mock HTTP server (tokio) |

@@ -4,23 +4,49 @@
 use std::sync::Arc;
 
 use crate::http::{self, Prepared, ResponseData};
-use crate::model::{Auth, AuthKind, OAuthToken, Request};
+use crate::model::{Auth, AuthKind, AuthOwner, Collection, OAuthToken, Request};
 use crate::oauth2;
 use crate::script::{self, Info, Net, Phase, RequestJs, ResponseJs, ScriptCtx, ScriptEvent, Scopes, TestResult, VarOp};
 
-/// Scripts of one level (collection, then request), outermost first.
+/// Scripts of one level (collection, folders, then request), outermost first.
 #[derive(Clone, Debug)]
 pub struct ScriptSet {
-    /// "Collection" or "Request", used in error messages.
-    pub label: &'static str,
+    /// "Collection", "Folder 'Users'" or "Request", used in error messages.
+    pub label: String,
     pub pre: String,
     pub post: String,
+}
+
+impl ScriptSet {
+    pub fn new(label: impl Into<String>, pre: &str, post: &str) -> Self {
+        Self { label: label.into(), pre: pre.to_string(), post: post.to_string() }
+    }
+}
+
+/// Scripts and inherited auth for `request` in `collection` (if it is saved in one): the
+/// collection's scripts, then each enclosing folder's, then the request's own.
+pub fn context(collection: Option<&Collection>, request: &Request) -> (Vec<ScriptSet>, Option<Auth>, AuthOwner) {
+    let mut scripts = Vec::new();
+    let mut auth = None;
+    let mut owner = AuthOwner::Collection;
+    if let Some(c) = collection {
+        scripts.push(ScriptSet::new("Collection", &c.pre_request_script, &c.post_response_script));
+        for f in c.ancestors(request.id) {
+            scripts.push(ScriptSet::new(format!("Folder '{}'", f.name), &f.pre_request_script, &f.post_response_script));
+        }
+        let (o, a) = c.inherited_auth(request.id);
+        (owner, auth) = (o, Some(a.clone()));
+    }
+    scripts.push(ScriptSet::new("Request", &request.pre_request_script, &request.post_response_script));
+    (scripts, auth, owner)
 }
 
 pub struct Job {
     pub request: Request,
     pub scripts: Vec<ScriptSet>,
+    /// The auth a request with `Inherit` uses, and where it comes from.
     pub auth: Option<Auth>,
+    pub auth_owner: AuthOwner,
     pub scopes: Scopes,
     pub environment_name: Option<String>,
     pub info: Info,
@@ -46,8 +72,8 @@ pub struct Report {
 pub struct TokenUpdate {
     /// The request that was sent.
     pub request: uuid::Uuid,
-    /// The token belongs to the collection auth (the request inherits it), not the request.
-    pub inherited: bool,
+    /// The inherited auth the token belongs to; `None` for the request's own auth.
+    pub owner: Option<AuthOwner>,
     pub token: OAuthToken,
 }
 
@@ -73,12 +99,12 @@ pub struct Executed {
 /// Runs a request with its scripts. `on_send` is called right before the HTTP call with the
 /// prepared request and the pre-request console events, so the UI can log it as pending.
 pub async fn run(job: Job, jar: Arc<reqwest::cookie::Jar>, on_send: impl FnOnce(&Prepared, &[ScriptEvent]) + Send) -> Executed {
-    let Job { mut request, scripts, mut auth, mut scopes, environment_name, info } = job;
+    let Job { mut request, scripts, mut auth, auth_owner, mut scopes, environment_name, info } = job;
     let mut report = Report::default();
     let net = Net { handle: tokio::runtime::Handle::current(), jar: jar.clone() };
 
     // 1. Pre-request scripts (they may change the request and variables).
-    let pres: Vec<(&'static str, String)> = scripts.iter().filter(|s| !s.pre.trim().is_empty()).map(|s| (s.label, s.pre.clone())).collect();
+    let pres: Vec<(String, String)> = scripts.iter().filter(|s| !s.pre.trim().is_empty()).map(|s| (s.label.clone(), s.pre.clone())).collect();
     if !pres.is_empty() {
         report.ran_scripts = true;
         let (req, sc, env, inf, net) = (request.clone(), scopes.clone(), environment_name.clone(), info.clone(), net.clone());
@@ -115,7 +141,7 @@ pub async fn run(job: Job, jar: Arc<reqwest::cookie::Jar>, on_send: impl FnOnce(
         match out.token {
             Ok(t) => {
                 a.oauth2.set_token(&t);
-                report.token_update = Some(TokenUpdate { request: request.id, inherited, token: t });
+                report.token_update = Some(TokenUpdate { request: request.id, owner: inherited.then_some(auth_owner), token: t });
             }
             Err(e) => report.pre_events.push(ScriptEvent::Log(script::LogLevel::Warn, format!("OAuth 2.0 token refresh failed: {e}"))),
         }
@@ -130,7 +156,7 @@ pub async fn run(job: Job, jar: Arc<reqwest::cookie::Jar>, on_send: impl FnOnce(
     let result = http::execute(prepared.clone(), jar).await;
 
     // 4. Post-response scripts (only when a response arrived, like Postman).
-    let posts: Vec<(&'static str, String)> = scripts.iter().filter(|s| !s.post.trim().is_empty()).map(|s| (s.label, s.post.clone())).collect();
+    let posts: Vec<(String, String)> = scripts.iter().filter(|s| !s.post.trim().is_empty()).map(|s| (s.label.clone(), s.post.clone())).collect();
     if let Ok(resp) = &result
         && !posts.is_empty()
     {
@@ -174,7 +200,7 @@ impl PreOutcome {
     }
 }
 
-fn run_pre(scripts: Vec<(&'static str, String)>, request: Request, scopes: Scopes, env: Option<&str>, info: &Info, net: Net) -> PreOutcome {
+fn run_pre(scripts: Vec<(String, String)>, request: Request, scopes: Scopes, env: Option<&str>, info: &Info, net: Net) -> PreOutcome {
     let mut o = PreOutcome::new(request, scopes);
     for (label, src) in scripts {
         let before = RequestJs::from_request(&o.request);
@@ -211,7 +237,7 @@ struct PostOutcome {
     next_request: Option<Option<String>>,
 }
 
-fn run_post(scripts: Vec<(&'static str, String)>, req: RequestJs, res: ResponseJs, scopes: Scopes, env: Option<&str>, info: &Info, net: Net) -> PostOutcome {
+fn run_post(scripts: Vec<(String, String)>, req: RequestJs, res: ResponseJs, scopes: Scopes, env: Option<&str>, info: &Info, net: Net) -> PostOutcome {
     let mut o = PostOutcome { scopes, ops: Vec::new(), tests: Vec::new(), events: Vec::new(), errors: Vec::new(), next_request: None };
     // Unlike pre-request scripts, an error in one does not stop the next one (Postman behaviour).
     for (label, src) in scripts {
@@ -243,10 +269,11 @@ mod tests {
         let job = |pre: &str| Job {
             request: Request { name: "r".into(), url: "{{host}}/x".into(), ..Default::default() },
             scripts: vec![
-                ScriptSet { label: "Collection", pre: "pm.variables.set('host', 'http://127.0.0.1:9');".into(), post: String::new() },
-                ScriptSet { label: "Request", pre: pre.into(), post: "pm.test('never', () => {})".into() },
+                ScriptSet::new("Collection", "pm.variables.set('host', 'http://127.0.0.1:9');", ""),
+                ScriptSet::new("Request", pre, "pm.test('never', () => {})"),
             ],
             auth: None,
+            auth_owner: AuthOwner::Collection,
             scopes: Scopes::new(&[], &[KeyValue::new("host", "http://unused")], None, &[]),
             environment_name: None,
             info: Info::default(),
@@ -265,6 +292,27 @@ mod tests {
         assert!(ex.result.is_err());
         assert!(ex.report.tests.is_empty());
         assert_eq!(ex.report.persistent_ops().count(), 0);
+    }
+
+    #[test]
+    fn context_orders_scripts_and_picks_folder_auth() {
+        use crate::model::{Folder, Item};
+        let req = Request { pre_request_script: "r".into(), ..Default::default() };
+        let mut f = Folder::new("Users");
+        f.pre_request_script = "f".into();
+        f.auth = Auth { kind: AuthKind::Bearer, bearer_token: "F".into(), ..Default::default() };
+        let fid = f.id;
+        f.items.push(Item::Request(req.clone()));
+        let c = Collection { pre_request_script: "c".into(), items: vec![Item::Folder(f)], ..Default::default() };
+
+        let (scripts, auth, owner) = context(Some(&c), &req);
+        let got: Vec<(&str, &str)> = scripts.iter().map(|s| (s.label.as_str(), s.pre.as_str())).collect();
+        assert_eq!(got, vec![("Collection", "c"), ("Folder 'Users'", "f"), ("Request", "r")]);
+        assert_eq!((auth.unwrap().bearer_token, owner), ("F".to_string(), AuthOwner::Folder(fid)));
+
+        let (scripts, auth, _) = context(None, &req);
+        assert_eq!(scripts.len(), 1);
+        assert!(auth.is_none());
     }
 
     /// Tiny HTTP server: `/login` returns a token, any other path echoes the request headers.
@@ -310,8 +358,9 @@ mod tests {
         "#;
         let job = Job {
             request: Request { name: "Me".into(), url: "{{base}}/me".into(), pre_request_script: pre.into(), post_response_script: post.into(), ..Default::default() },
-            scripts: vec![ScriptSet { label: "Request", pre: pre.into(), post: post.into() }],
+            scripts: vec![ScriptSet::new("Request", pre, post)],
             auth: None,
+            auth_owner: AuthOwner::Collection,
             scopes: Scopes::new(&[], &[KeyValue::new("base", &base)], Some(&[]), &[]),
             environment_name: Some("Dev".into()),
             info: Info::default(),

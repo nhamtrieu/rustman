@@ -505,7 +505,7 @@ impl RustmanApp {
         let p = pal(ui);
         let Some(tab) = self.tabs.get(self.active) else { return };
         let vars = self.vars_for(tab.collection);
-        let inherited = self.inherited_auth(tab.collection);
+        let inherited = self.inherited_auth(tab.collection, tab.request.id).map(|(a, _)| a);
         let opts = self.ws.snippet;
         let code = match codegen::build(&tab.request, &vars, inherited.as_ref()) {
             Ok(snippet) => codegen::generate(&snippet, &opts),

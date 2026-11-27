@@ -16,6 +16,7 @@ mod openapi;
 mod pm;
 mod run;
 mod script;
+mod sign;
 mod storage;
 mod theme;
 mod vars;

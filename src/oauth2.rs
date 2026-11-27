@@ -276,6 +276,7 @@ async fn token_request(
         headers,
         body: PreparedBody::Bytes(body.join("&").into_bytes()),
         settings: settings.clone(),
+        digest: None,
     };
     let result = http::execute(prepared.clone(), jar).await;
     let token = match &result {
@@ -790,6 +791,7 @@ mod tests {
             request: Request { url: "{{base}}/echo".into(), auth: request_auth, ..Default::default() },
             scripts: Vec::new(),
             auth: collection_auth,
+            auth_owner: crate::model::AuthOwner::Collection,
             scopes: crate::script::Scopes::new(&[], &[crate::model::KeyValue::new("base", &base)], None, &[]),
             environment_name: None,
             info: Default::default(),
@@ -801,13 +803,13 @@ mod tests {
         let body: serde_json::Value = serde_json::from_slice(&ex.result.unwrap().body).unwrap();
         assert_eq!(body["auth"], "Bearer refreshed");
         let u = ex.report.token_update.unwrap();
-        assert!(!u.inherited);
+        assert_eq!(u.owner, None);
         assert_eq!(u.token.access_token, "refreshed");
         assert_eq!(ex.report.pre_events.len(), 1, "the refresh call shows in the console");
 
         // Inherited from the collection.
         let ex = rt.block_on(exec::run(job(Auth::default(), Some(oauth_auth.clone())), jar(), |_, _| {}));
-        assert!(ex.report.token_update.unwrap().inherited);
+        assert_eq!(ex.report.token_update.unwrap().owner, Some(crate::model::AuthOwner::Collection));
 
         // Auto-refresh off: the old token is sent as is.
         let off = Auth { oauth2: Box::new(OAuth2 { auto_refresh: false, ..oauth.clone() }), ..oauth_auth };

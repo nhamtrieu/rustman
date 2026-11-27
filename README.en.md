@@ -30,28 +30,28 @@ scripts/install-desktop.sh --uninstall
 
 - **Requests**: GET/POST/PUT/PATCH/DELETE/HEAD/OPTIONS, query params synced both ways with the URL, headers, multiple tabs (right-click a tab: New Request, Duplicate Tab, Close / Force Close Tab, Close Other Tabs, Close All Tabs, Force Close All Tabs).
 - **Body**: raw (JSON with highlighting, validation and Beautify; Text/XML/HTML/JS), x-www-form-urlencoded, form-data (text + file), binary, GraphQL.
-- **Auth**: Bearer, Basic, API Key (header/query), OAuth 2.0, and "Inherit auth from parent" to use the collection's auth.
+- **Auth**: Bearer, Basic, API Key (header/query), Digest (answers the 401 challenge; MD5, SHA-256, `-sess`), OAuth 2.0, AWS Signature v4 (including a session token for temporary credentials), and "Inherit auth from parent" to use the auth of the nearest folder or of the collection.
 - **OAuth 2.0** (per request or collection): Authorization Code, Authorization Code (PKCE, SHA-256/plain), Implicit, Password Credentials and Client Credentials grants. *Get New Access Token* opens the browser; if the Callback URL is `http://localhost:<port>` or `127.0.0.1`, Rustman catches the redirect itself, otherwise paste the URL the browser lands on into the dialog. Client credentials can be sent as a Basic header or in the body; supports Scope, State, Audience, Resource and Refresh Token URL. The token goes into a header (custom prefix) or the `access_token` query param; shows expiry, *Refresh*/*Clear* buttons, and *Auto-refresh*: expired tokens are refreshed before sending (in the Collection Runner too). Token requests show up in the Console. `{{variables}}` work in every field.
 - **Per-request settings**: timeout, follow redirects, verify SSL.
 - **Proxy** (Settings → Proxy): use the system proxy (`HTTP_PROXY`, `HTTPS_PROXY`, `NO_PROXY`) or a custom one (host:port, apply to HTTP and/or HTTPS, Basic auth, bypass list: domains, `*.domain`, IPs, CIDRs; localhost is bypassed by default). Applies to every request: tabs, runner, `pm.sendRequest`, OAuth 2.0, MCP.
 - **Certificates** (Settings → Certificates): add CA certificates (PEM files, trusted in addition to the built-in roots) and per-host client certificates for mutual TLS (`api.example.com`, `*.example.com`, optionally with `:port`), CRT + KEY in PEM format.
-- **Scripts** (the *Scripts* tab of requests and collections): JavaScript run *Pre-request* (before sending) and *Post-response* (after the response arrives), with a Postman-compatible `pm` API. Collection scripts run before request scripts. See [Scripts](#scripts).
+- **Scripts** (the *Scripts* tab of requests, folders and collections): JavaScript run *Pre-request* (before sending) and *Post-response* (after the response arrives), with a Postman-compatible `pm` API. Order: the collection's scripts, then those of each folder containing the request (outermost first), then the request's own. See [Scripts](#scripts).
 - **Test Results**: `pm.test` results (PASS/FAIL/SKIPPED, filterable by status) and script errors with line numbers.
 - **Response**: status/time/size, pretty highlighted JSON (line-virtualized, so large responses stay smooth), Raw, Headers, Cookies, Info, Copy, Save to file.
-- **Collections**: nested folders, drag and drop to reorder/move, rename/duplicate/delete, collection-level variables and auth.
+- **Collections**: nested folders, drag and drop to reorder/move, rename/duplicate/delete, collection-level variables, auth and scripts. Folders have their own description, auth and scripts (right-click a folder → *Edit* / *Authorization* / *Scripts*); a folder set to *Inherit* passes its parent's auth through.
 - **Environments & variables**: `{{var}}` everywhere, precedence environment > collection > globals; dynamic variables `{{$guid}}`, `{{$timestamp}}`, `{{$isoTimestamp}}`, `{{$randomInt}}`, `{{$randomEmail}}`...; defined/undefined variables are highlighted green/red, hover to see the resolved value.
 - **Console** (status bar → Console, or Ctrl+Alt+C): logs every request sent, with the resolved URL, request/response headers and bodies, timing, size and errors; filter by text or errors only; right-click to copy the URL/response.
 - **Toolsets (MCP)**: expose saved requests as *tools* for AI agents (Claude Code, Cursor, VS Code…). Rustman runs a local MCP server at `http://localhost:<port>/mcp` (Streamable HTTP). The request `{{variables}}` the agent should fill in become tool parameters (with description, required or optional); the rest are resolved from the active environment / collection. The *Connect* button provides a ready-made `claude mcp add --transport http …` command and JSON config. Agent tool calls are logged.
 - **Terminal** (status bar → Terminal, or Ctrl+\`): a real shell in a PTY (bash/zsh/PowerShell) sharing the panel with the Console. Supports 16/256/truecolor, arrow keys, Ctrl+C/D/Z…, bracketed paste, mouse-wheel scrollback, full-screen programs (vim, htop). Ctrl+Shift+C or the copy button copies the screen.
 - **Cookie jar** shared across requests (Tools → Clear cookies to reset).
 - **History** of sent requests.
-- **Import**: Postman Collection v2.1 (including scripts; folder scripts are merged into the requests inside), Postman Environment, OpenAPI 3 / Swagger 2 (JSON or YAML, creates both a spec and a collection), cURL commands (you can paste one straight into the URL bar).
+- **Import**: Postman Collection v2.1 (including folder scripts, auth and descriptions), Postman Environment, OpenAPI 3 / Swagger 2 (JSON or YAML, creates both a spec and a collection), cURL commands (you can paste one straight into the URL bar).
 - **Specs**: edit OpenAPI (YAML/JSON) with an endpoint list and live syntax errors alongside; *Generate Collection* builds a collection (folders by tag, a `{{baseUrl}}` variable, path params as variables, query/headers, sample bodies from schemas).
 - **Mocks**: local mock server (`http://localhost:<port>`). Each route has a method (or ANY), a path like `/users/:id` or `/files/*`, status, headers, body and delay. Bodies/headers can use `{{id}}` (path params), query params and dynamic variables such as `{{$guid}}`. CORS is open, incoming requests are logged, and route changes take effect while the server is running.
 - **Datasets**: editable data tables, import CSV/JSON, export CSV. Column names are variable names.
 - **Collection Runner** (right-click a collection → *Run collection*): pick requests, iterations, delay and a dataset (iteration n uses row n; columns override other variables). Requests run in order with their scripts: variables set by one request are visible to the next, and `pm.execution.setNextRequest` changes the order. A request *Passed* when all its tests pass (with no tests, when status < 400); per-test results are shown under each request. All requests and `console.log` output also go to the Console.
 - **Documents**: Markdown notes (headings, lists, checklists, code blocks, **bold**, *italic*, `code`) with Edit/Preview modes.
-- **Export**: Postman Collection v2.1 (including scripts), Postman Environment.
+- **Export**: Postman Collection v2.1 (including folder scripts and auth), Postman Environment.
 - **Code snippets** (right panel, syntax highlighted): 34 languages/libraries — C libcurl, C# HttpClient/RestSharp, cURL, Dart dio/http, Go, HTTP, Java OkHttp/Unirest, JavaScript Fetch/jQuery/XHR, Kotlin OkHttp, NodeJs Axios/Native/Request/Unirest, Objective-C, OCaml, PHP cURL/Guzzle/HTTP_Request2/pecl_http, PowerShell, Python http.client/Requests, R httr/RCurl, Ruby, Rust reqwest, HTTPie, wget, Swift. Options: indentation, follow redirects, long-form cURL options, line continuation character.
 - Light/dark theme, workspace autosave.
 
@@ -96,7 +96,7 @@ Scripts are JavaScript (embedded QuickJS engine). Each script runs in its own sa
 
 Proxy/certificates not yet supported: SOCKS proxies, PFX/PKCS#12 files and password-protected private keys (convert to PEM with `openssl pkcs12 -in c.pfx -out c.pem -nodes`).
 
-Not yet supported: `cheerio`, `csv-parse`, `postman-collection`, other Node modules (`url`, `crypto`, ...), `pm.vault`, folder-level scripts (merged into requests on import). Toolsets (MCP) send requests without running scripts.
+Not yet supported: `cheerio`, `csv-parse`, `postman-collection`, other Node modules (`url`, `crypto`, ...), `pm.vault`. Toolsets (MCP) send requests without running scripts.
 
 ## Keyboard shortcuts
 
@@ -134,6 +134,7 @@ The workspace is saved to `~/.local/share/rustman/workspace.json` (Linux). Set `
 | `src/script/prelude.js` | The `pm` API (variables, request, response, `pm.test`, `pm.expect`, JSON schema, ...) written in JS |
 | `src/script/require.js` | `require()` for scripts, Node-style modules (`uuid`, `buffer`, `querystring`, `util`, `xml2js`), `crypto.getRandomValues` |
 | `src/script/lib/` | Bundled JS libraries (crypto-js, lodash, moment, tv4, ajv, chai) with `LICENSES.md` |
+| `src/sign.rs` | AWS Signature v4 signing, Digest header computation; HMAC-SHA256 and MD5 |
 | `src/import.rs` | Postman import/export, cURL parsing |
 | `src/openapi.rs` | OpenAPI 3 / Swagger 2 parsing, collection generation |
 | `src/mock.rs` | Mock HTTP server (tokio) |

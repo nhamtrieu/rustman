@@ -517,6 +517,7 @@ mod tests {
             headers: vec![],
             body: PreparedBody::None,
             settings: Default::default(),
+            digest: None,
         };
         let mut last = Uuid::nil();
         for _ in 0..MAX_ENTRIES + 5 {

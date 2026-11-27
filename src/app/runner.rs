@@ -10,7 +10,7 @@ use std::time::{Duration, Instant};
 use eframe::egui::{self, Align2, Id, RichText, Sense, Ui, pos2, vec2};
 
 use super::*;
-use crate::exec::{self, Executed};
+use crate::exec::Executed;
 use crate::run::RunEvent;
 use crate::http::{human_duration, human_size};
 use crate::script::TestResult;
@@ -125,11 +125,9 @@ impl RustmanApp {
         let env = self.ws.active_env();
         let scopes = Scopes::new(&self.ws.globals, &coll.variables, env.map(|e| &e.variables[..]), &[]);
         let env_name = env.map(|e| e.name.clone());
-        let coll_scripts = exec::ScriptSet { label: "Collection", pre: coll.pre_request_script.clone(), post: coll.post_response_script.clone() };
         let run_plan = crate::run::RunPlan {
             requests: plan,
-            collection_scripts: Some(coll_scripts),
-            auth: Some(coll.auth.clone()),
+            collection: coll.clone(),
             scopes,
             environment_name: env_name,
             rows,

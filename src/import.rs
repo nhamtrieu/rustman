@@ -66,6 +66,21 @@ fn parse_auth(v: Option<&Value>, default: AuthKind) -> Auth {
             ..Default::default()
         },
         "oauth2" => Auth { kind: AuthKind::OAuth2, oauth2: Box::new(parse_oauth2(auth)), ..Default::default() },
+        "awsv4" => Auth {
+            kind: AuthKind::AwsSigV4,
+            aws_access_key: auth_param(auth, "awsv4", "accessKey"),
+            aws_secret_key: auth_param(auth, "awsv4", "secretKey"),
+            aws_region: auth_param(auth, "awsv4", "region"),
+            aws_service: auth_param(auth, "awsv4", "service"),
+            aws_session_token: auth_param(auth, "awsv4", "sessionToken"),
+            ..Default::default()
+        },
+        "digest" => Auth {
+            kind: AuthKind::Digest,
+            digest_username: auth_param(auth, "digest", "username"),
+            digest_password: auth_param(auth, "digest", "password"),
+            ..Default::default()
+        },
         "noauth" => Auth::none(),
         _ => Auth { kind: default, ..Default::default() },
     }
@@ -272,22 +287,6 @@ fn parse_events(v: Option<&Value>) -> (String, String) {
     (pre, test)
 }
 
-/// Prepends folder scripts (Rustman has no folder-level scripts) to every request below.
-fn push_folder_scripts(items: &mut [Item], pre: &str, test: &str) {
-    for item in items {
-        match item {
-            Item::Folder(f) => push_folder_scripts(&mut f.items, pre, test),
-            Item::Request(r) => {
-                for (own, folder) in [(&mut r.pre_request_script, pre), (&mut r.post_response_script, test)] {
-                    if !folder.trim().is_empty() {
-                        *own = if own.trim().is_empty() { folder.to_string() } else { format!("{folder}\n\n{own}") };
-                    }
-                }
-            }
-        }
-    }
-}
-
 fn parse_items(v: Option<&Value>) -> Vec<Item> {
     let Some(arr) = v.and_then(Value::as_array) else { return Vec::new() };
     arr.iter()
@@ -295,9 +294,14 @@ fn parse_items(v: Option<&Value>) -> Vec<Item> {
             let name = e.get("name").map(s).unwrap_or_else(|| "Untitled".into());
             let (pre, test) = parse_events(e.get("event"));
             if e.get("item").is_some() {
-                let mut items = parse_items(e.get("item"));
-                push_folder_scripts(&mut items, &pre, &test);
-                Item::Folder(Folder { items, ..Folder::new(name) })
+                Item::Folder(Folder {
+                    items: parse_items(e.get("item")),
+                    description: description_of(e.get("description")),
+                    auth: parse_auth(e.get("auth"), AuthKind::Inherit),
+                    pre_request_script: pre,
+                    post_response_script: test,
+                    ..Folder::new(name)
+                })
             } else {
                 let mut r = parse_request(name, e.get("request").unwrap_or(&Value::Null));
                 r.pre_request_script = pre;
@@ -379,6 +383,20 @@ fn auth_to_json(a: &Auth) -> Option<Value> {
             ]
         })),
         AuthKind::OAuth2 => Some(oauth2_to_json(&a.oauth2)),
+        AuthKind::AwsSigV4 => Some(json!({
+            "type": "awsv4",
+            "awsv4": [
+                p("accessKey", &a.aws_access_key),
+                p("secretKey", &a.aws_secret_key),
+                p("region", &a.aws_region),
+                p("service", &a.aws_service),
+                p("sessionToken", &a.aws_session_token)
+            ]
+        })),
+        AuthKind::Digest => Some(json!({
+            "type": "digest",
+            "digest": [p("username", &a.digest_username), p("password", &a.digest_password)]
+        })),
     }
 }
 
@@ -496,7 +514,19 @@ fn items_to_json(items: &[Item]) -> Value {
         items
             .iter()
             .map(|i| match i {
-                Item::Folder(f) => json!({ "name": f.name, "item": items_to_json(&f.items) }),
+                Item::Folder(f) => {
+                    let mut v = json!({ "name": f.name, "item": items_to_json(&f.items) });
+                    if !f.description.is_empty() {
+                        v["description"] = json!(f.description);
+                    }
+                    if let Some(a) = auth_to_json(&f.auth) {
+                        v["auth"] = a;
+                    }
+                    if let Some(ev) = events_to_json(&f.pre_request_script, &f.post_response_script) {
+                        v["event"] = ev;
+                    }
+                    v
+                }
                 Item::Request(r) => {
                     let mut v = json!({ "name": r.name, "request": request_to_json(r), "response": [] });
                     if let Some(ev) = events_to_json(&r.pre_request_script, &r.post_response_script) {
@@ -860,14 +890,45 @@ mod tests {
         let c = import_postman_collection(src).unwrap();
         assert_eq!(c.pre_request_script, "console.log('coll');");
         let Item::Folder(f) = &c.items[0] else { panic!() };
+        assert_eq!(f.post_response_script, "pm.test('folder', () => {});", "folder scripts stay on the folder");
         let Item::Request(r) = &f.items[0] else { panic!() };
         assert_eq!(r.pre_request_script, "", "disabled scripts are dropped");
-        assert_eq!(r.post_response_script, "pm.test('folder', () => {});\n\npm.test('a', () => {});\npm.test('b', () => {});");
+        assert_eq!(r.post_response_script, "pm.test('a', () => {});\npm.test('b', () => {});");
 
         let again = import_postman_collection(&export_postman_collection(&c)).unwrap();
         assert_eq!(again.pre_request_script, c.pre_request_script);
         let Item::Folder(f2) = &again.items[0] else { panic!() };
+        assert_eq!(f2.post_response_script, f.post_response_script);
         let Item::Request(r2) = &f2.items[0] else { panic!() };
         assert_eq!((&r2.pre_request_script, &r2.post_response_script), (&r.pre_request_script, &r.post_response_script));
+    }
+
+    #[test]
+    fn postman_folder_auth_and_new_auth_kinds_roundtrip() {
+        let src = r#"{
+          "info": {"name": "A"},
+          "item": [
+            {"name": "AWS", "description": "signed calls",
+             "auth": {"type": "awsv4", "awsv4": [
+               {"key": "accessKey", "value": "{{ak}}"}, {"key": "secretKey", "value": "{{sk}}"},
+               {"key": "region", "value": "eu-west-1"}, {"key": "service", "value": "execute-api"}]},
+             "item": [
+               {"name": "D", "request": {"method": "GET", "url": "http://x",
+                 "auth": {"type": "digest", "digest": [{"key": "username", "value": "u"}, {"key": "password", "value": "p"}]}}}
+             ]}
+          ]
+        }"#;
+        let c = import_postman_collection(src).unwrap();
+        let Item::Folder(f) = &c.items[0] else { panic!() };
+        assert_eq!((f.auth.kind, f.auth.aws_region.as_str(), f.auth.aws_service.as_str()), (AuthKind::AwsSigV4, "eu-west-1", "execute-api"));
+        assert_eq!(f.description, "signed calls");
+        let Item::Request(r) = &f.items[0] else { panic!() };
+        assert_eq!((r.auth.kind, r.auth.digest_username.as_str()), (AuthKind::Digest, "u"));
+
+        let again = import_postman_collection(&export_postman_collection(&c)).unwrap();
+        let Item::Folder(f2) = &again.items[0] else { panic!() };
+        assert_eq!((&f2.auth, &f2.description), (&f.auth, &f.description));
+        let Item::Request(r2) = &f2.items[0] else { panic!() };
+        assert_eq!(r2.auth, r.auth);
     }
 }

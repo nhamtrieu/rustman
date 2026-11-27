@@ -6,8 +6,8 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use crate::exec::{self, Executed, ScriptSet};
-use crate::model::{Auth, Item, KeyValue, Request};
+use crate::exec::{self, Executed};
+use crate::model::{Collection, Item, KeyValue, Request};
 use crate::script::{Info, Scopes};
 
 /// Safety net against `setNextRequest` loops: max requests per iteration = this × request count.
@@ -15,9 +15,9 @@ pub const MAX_STEPS_FACTOR: usize = 100;
 
 pub struct RunPlan {
     pub requests: Vec<Request>,
-    pub collection_scripts: Option<ScriptSet>,
-    /// Collection auth, for requests that inherit it.
-    pub auth: Option<Auth>,
+    /// The collection the requests come from: its scripts, and the collection and folder scripts
+    /// and auth that apply to each request. OAuth 2.0 tokens refreshed during the run go here.
+    pub collection: Collection,
     pub scopes: Scopes,
     pub environment_name: Option<String>,
     /// Data rows (column name → value); iteration `n` uses row `n % len`.
@@ -34,7 +34,7 @@ pub enum RunEvent<'a> {
 
 /// Runs the plan. `on_event` returns `false` to stop the run. Returns the variables at the end.
 pub async fn run(plan: RunPlan, jar: Arc<reqwest::cookie::Jar>, mut on_event: impl FnMut(RunEvent<'_>) -> bool) -> Scopes {
-    let RunPlan { mut requests, collection_scripts, mut auth, mut scopes, environment_name, rows, iterations, delay_ms } = plan;
+    let RunPlan { mut requests, mut collection, mut scopes, environment_name, rows, iterations, delay_ms } = plan;
     let iterations = iterations.max(1);
     let mut first = true;
     'run: for it in 0..iterations {
@@ -52,12 +52,12 @@ pub async fn run(plan: RunPlan, jar: Arc<reqwest::cookie::Jar>, mut on_event: im
             }
             scopes.local.clear();
             let r = &requests[idx];
-            let mut scripts: Vec<ScriptSet> = collection_scripts.iter().cloned().collect();
-            scripts.push(ScriptSet { label: "Request", pre: r.pre_request_script.clone(), post: r.post_response_script.clone() });
+            let (scripts, auth, auth_owner) = exec::context(Some(&collection), r);
             let job = exec::Job {
                 request: r.clone(),
                 scripts,
-                auth: auth.clone(),
+                auth,
+                auth_owner,
                 scopes: scopes.clone(),
                 environment_name: environment_name.clone(),
                 info: Info { request_name: r.name.clone(), request_id: r.id.to_string(), iteration: it, iteration_count: iterations },
@@ -66,12 +66,17 @@ pub async fn run(plan: RunPlan, jar: Arc<reqwest::cookie::Jar>, mut on_event: im
             scopes = executed.scopes.clone();
             let next = executed.report.next_request.clone();
             if let Some(u) = &executed.report.token_update {
-                if u.inherited {
-                    if let Some(a) = &mut auth {
-                        a.oauth2.set_token(&u.token);
+                match u.owner {
+                    Some(owner) => {
+                        if let Some(a) = collection.auth_mut(owner) {
+                            a.oauth2.set_token(&u.token);
+                        }
                     }
-                } else if let Some(req) = requests.iter_mut().find(|p| p.id == u.request) {
-                    req.auth.oauth2.set_token(&u.token);
+                    None => {
+                        if let Some(req) = requests.iter_mut().find(|p| p.id == u.request) {
+                            req.auth.oauth2.set_token(&u.token);
+                        }
+                    }
                 }
             }
             if !on_event(RunEvent::Step { iteration: it + 1, request: &requests[idx], executed: Box::new(executed) }) {

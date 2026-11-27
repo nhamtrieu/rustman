@@ -51,7 +51,7 @@ impl RustmanApp {
                     params: t.params.clone(),
                     request: r.clone(),
                     base_vars,
-                    auth: Some(c.auth.clone()),
+                    auth: Some(c.inherited_auth(r.id).1.clone()),
                 })
             })
             .collect()

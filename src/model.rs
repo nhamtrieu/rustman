@@ -173,6 +173,10 @@ pub enum AuthKind {
     Basic,
     ApiKey,
     OAuth2,
+    /// AWS Signature Version 4.
+    AwsSigV4,
+    /// HTTP Digest (RFC 7616): answers the server's 401 challenge.
+    Digest,
 }
 
 impl AuthKind {
@@ -184,6 +188,8 @@ impl AuthKind {
             AuthKind::Basic => "Basic Auth",
             AuthKind::ApiKey => "API Key",
             AuthKind::OAuth2 => "OAuth 2.0",
+            AuthKind::AwsSigV4 => "AWS Signature",
+            AuthKind::Digest => "Digest Auth",
         }
     }
 }
@@ -207,6 +213,15 @@ pub struct Auth {
     pub api_key_in: ApiKeyLocation,
     #[serde(skip_serializing_if = "OAuth2::is_default")]
     pub oauth2: Box<OAuth2>,
+    pub aws_access_key: String,
+    pub aws_secret_key: String,
+    /// Empty: `us-east-1`.
+    pub aws_region: String,
+    /// `execute-api`, `s3`, `sqs`, ...
+    pub aws_service: String,
+    pub aws_session_token: String,
+    pub digest_username: String,
+    pub digest_password: String,
 }
 
 impl Auth {
@@ -520,11 +535,29 @@ pub struct Folder {
     pub name: String,
     #[serde(default)]
     pub items: Vec<Item>,
+    #[serde(default)]
+    pub description: String,
+    /// Used by the requests below that inherit auth; `Inherit` passes the parent's auth through.
+    #[serde(default)]
+    pub auth: Auth,
+    /// Run for every request below, after the collection's scripts and before the request's own.
+    #[serde(default)]
+    pub pre_request_script: String,
+    #[serde(default)]
+    pub post_response_script: String,
 }
 
 impl Folder {
     pub fn new(name: impl Into<String>) -> Self {
-        Self { id: Uuid::new_v4(), name: name.into(), items: Vec::new() }
+        Self {
+            id: Uuid::new_v4(),
+            name: name.into(),
+            items: Vec::new(),
+            description: String::new(),
+            auth: Auth::default(),
+            pre_request_script: String::new(),
+            post_response_script: String::new(),
+        }
     }
 }
 
@@ -561,6 +594,7 @@ impl Item {
                 id: Uuid::new_v4(),
                 name: format!("{} Copy", f.name),
                 items: f.items.iter().map(Item::fresh_ids).collect(),
+                ..f.clone()
             }),
         }
     }
@@ -569,8 +603,8 @@ impl Item {
             Item::Request(r) => Item::Request(Request { id: Uuid::new_v4(), ..r.clone() }),
             Item::Folder(f) => Item::Folder(Folder {
                 id: Uuid::new_v4(),
-                name: f.name.clone(),
                 items: f.items.iter().map(Item::fresh_ids).collect(),
+                ..f.clone()
             }),
         }
     }
@@ -601,6 +635,70 @@ impl Default for Collection {
             auth: Auth::none(),
             pre_request_script: String::new(),
             post_response_script: String::new(),
+        }
+    }
+}
+
+/// Whose auth a request with `Inherit` ends up using.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default)]
+pub enum AuthOwner {
+    #[default]
+    Collection,
+    Folder(Uuid),
+}
+
+impl Collection {
+    /// Folders that contain the item `id`, outermost first. Empty when the item is at the top
+    /// level or not in this collection (e.g. a new request not saved yet).
+    pub fn ancestors(&self, id: Uuid) -> Vec<&Folder> {
+        fn walk<'a>(items: &'a [Item], id: Uuid, path: &mut Vec<&'a Folder>) -> bool {
+            for item in items {
+                if item.id() == id {
+                    return true;
+                }
+                if let Item::Folder(f) = item {
+                    path.push(f);
+                    if walk(&f.items, id, path) {
+                        return true;
+                    }
+                    path.pop();
+                }
+            }
+            false
+        }
+        let mut path = Vec::new();
+        if walk(&self.items, id, &mut path) { path } else { Vec::new() }
+    }
+
+    /// The auth a request (or folder) `id` inherits: the nearest folder above it that sets
+    /// one, otherwise the collection's.
+    pub fn inherited_auth(&self, id: Uuid) -> (AuthOwner, &Auth) {
+        self.ancestors(id)
+            .into_iter()
+            .rev()
+            .find(|f| f.auth.kind != AuthKind::Inherit)
+            .map(|f| (AuthOwner::Folder(f.id), &f.auth))
+            .unwrap_or((AuthOwner::Collection, &self.auth))
+    }
+
+    pub fn auth_mut(&mut self, owner: AuthOwner) -> Option<&mut Auth> {
+        match owner {
+            AuthOwner::Collection => Some(&mut self.auth),
+            AuthOwner::Folder(id) => match find_item_mut(&mut self.items, id) {
+                Some(Item::Folder(f)) => Some(&mut f.auth),
+                _ => None,
+            },
+        }
+    }
+
+    /// "collection 'Shop'" / "folder 'Users'", for messages about inherited settings.
+    pub fn owner_label(&self, owner: AuthOwner) -> String {
+        match owner {
+            AuthOwner::Collection => format!("collection '{}'", self.name),
+            AuthOwner::Folder(id) => match find_item(&self.items, id) {
+                Some(Item::Folder(f)) => format!("folder '{}'", f.name),
+                _ => "folder".into(),
+            },
         }
     }
 }
@@ -1258,6 +1356,38 @@ mod tests {
         let mut d = Dataset::default();
         d.rows = vec![vec!["Nham".into(), "n@x.io".into()]];
         assert_eq!(d.row_vars(0)[1], KeyValue::new("email", "n@x.io"));
+    }
+
+    #[test]
+    fn folder_auth_inheritance() {
+        let req = Request::default();
+        let rid = req.id;
+        let mut inner = Folder::new("inner");
+        inner.items.push(Item::Request(req));
+        let inner_id = inner.id;
+        let mut outer = Folder::new("outer");
+        outer.auth = Auth { kind: AuthKind::Bearer, bearer_token: "outer".into(), ..Default::default() };
+        outer.items.push(Item::Folder(inner));
+        let outer_id = outer.id;
+        let mut c = Collection { auth: Auth { kind: AuthKind::Basic, ..Default::default() }, ..Default::default() };
+        c.items.push(Item::Folder(outer));
+
+        assert_eq!(c.ancestors(rid).iter().map(|f| f.id).collect::<Vec<_>>(), vec![outer_id, inner_id]);
+        assert!(c.ancestors(Uuid::new_v4()).is_empty(), "unknown items have no folders");
+        // `inner` inherits, so the request gets `outer`'s bearer token.
+        let (owner, auth) = c.inherited_auth(rid);
+        assert_eq!((owner, auth.bearer_token.as_str()), (AuthOwner::Folder(outer_id), "outer"));
+        assert_eq!(c.owner_label(owner), "folder 'outer'");
+
+        c.auth_mut(AuthOwner::Folder(inner_id)).unwrap().kind = AuthKind::None;
+        assert_eq!(c.inherited_auth(rid).0, AuthOwner::Folder(inner_id), "No Auth on a folder stops inheritance");
+        c.auth_mut(AuthOwner::Folder(inner_id)).unwrap().kind = AuthKind::Inherit;
+        c.auth_mut(AuthOwner::Folder(outer_id)).unwrap().kind = AuthKind::Inherit;
+        assert_eq!(c.inherited_auth(rid), (AuthOwner::Collection, &c.auth));
+
+        // Old workspaces have folders without the new fields.
+        let f: Folder = serde_json::from_str(r#"{"id":"6f1c1a8e-3c2b-4f0e-9a51-0b8f7f1e2d3c","name":"old"}"#).unwrap();
+        assert_eq!(f.auth.kind, AuthKind::Inherit);
     }
 
     #[test]

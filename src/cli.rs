@@ -11,7 +11,7 @@ use std::time::{Duration, Instant};
 use serde_json::json;
 use uuid::Uuid;
 
-use crate::exec::{Executed, ScriptSet};
+use crate::exec::Executed;
 use crate::http::{human_duration, human_size};
 use crate::model::{ClientCert, Collection, Dataset, Environment, KeyValue, NetSettings, Workspace};
 use crate::run::{RunEvent, RunPlan};
@@ -430,8 +430,7 @@ fn run(o: &Opts, term: &mut dyn Write) -> Result<i32, String> {
 
     let plan = RunPlan {
         requests,
-        collection_scripts: Some(ScriptSet { label: "Collection", pre: collection.pre_request_script.clone(), post: collection.post_response_script.clone() }),
-        auth: Some(collection.auth.clone()),
+        collection: collection.clone(),
         scopes: Scopes::new(&globals, &collection.variables, environment.as_ref().map(|e| &e.variables[..]), &[]),
         environment_name: environment.as_ref().map(|e| e.name.clone()),
         rows,
