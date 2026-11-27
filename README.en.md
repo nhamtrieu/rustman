@@ -47,7 +47,8 @@ scripts/install-desktop.sh --uninstall
 - **Certificates** (Settings → Certificates): add CA certificates (PEM files, trusted in addition to the built-in roots) and per-host client certificates for mutual TLS (`api.example.com`, `*.example.com`, optionally with `:port`), CRT + KEY in PEM format.
 - **Scripts** (the *Scripts* tab of requests, folders and collections): JavaScript run *Pre-request* (before sending) and *Post-response* (after the response arrives), with a Postman-compatible `pm` API. Order: the collection's scripts, then those of each folder containing the request (outermost first), then the request's own. See [Scripts](#scripts).
 - **Test Results**: `pm.test` results (PASS/FAIL/SKIPPED, filterable by status) and script errors with line numbers.
-- **Response**: status/time/size, pretty highlighted JSON (line-virtualized, so large responses stay smooth), Raw, Headers, Cookies, Info, Copy, Save to file.
+- **Response**: status/time/size, pretty highlighted JSON (line-virtualized, so large responses stay smooth), Raw, Headers, Cookies, Info, Copy, Save to file, *Save as Example*.
+- **Examples** (the request's *Examples* tab): keep a response as an example (*Save as Example*) or add one by hand; each has a method/URL, status, headers and an editable body. Imported and exported with Postman collections (the item's `response`). Right-click a collection → *Mock from examples* creates a mock server that answers with them (`{{id}}` in the URL becomes `:id`).
 - **Collections**: nested folders, drag and drop to reorder/move, rename/duplicate/delete, collection-level variables, auth and scripts. Folders have their own description, auth and scripts (right-click a folder → *Edit* / *Authorization* / *Scripts*); a folder set to *Inherit* passes its parent's auth through.
 - **Environments & variables**: `{{var}}` everywhere, precedence environment > collection > globals; dynamic variables `{{$guid}}`, `{{$timestamp}}`, `{{$isoTimestamp}}`, `{{$randomInt}}`, `{{$randomEmail}}`...; defined/undefined variables are highlighted green/red, hover to see the resolved value.
 - **Console** (status bar → Console, or Ctrl+Alt+C): logs every request sent, with the resolved URL, request/response headers and bodies, timing, size and errors; filter by text or errors only; right-click to copy the URL/response.
@@ -55,7 +56,7 @@ scripts/install-desktop.sh --uninstall
 - **Terminal** (status bar → Terminal, or Ctrl+\`): a real shell in a PTY (bash/zsh/PowerShell) sharing the panel with the Console. Supports 16/256/truecolor, arrow keys, Ctrl+C/D/Z…, bracketed paste, mouse-wheel scrollback, full-screen programs (vim, htop). Ctrl+Shift+C or the copy button copies the screen.
 - **Cookie jar** shared across requests (Tools → Clear cookies to reset).
 - **History** of sent requests.
-- **Import**: Postman Collection v2.1 (including folder scripts, auth and descriptions), Postman Environment, OpenAPI 3 / Swagger 2 (JSON or YAML, creates both a spec and a collection), cURL commands (you can paste one straight into the URL bar).
+- **Import**: Postman Collection v2.1 (including folder scripts, auth, descriptions and examples), Postman Environment, OpenAPI 3 / Swagger 2 (JSON or YAML, creates both a spec and a collection), cURL commands (you can paste one straight into the URL bar). The *From Postman* tab imports straight from a Postman account through the Postman API: paste an API key (Postman → Settings → API keys, or set `POSTMAN_API_KEY`), pick a workspace and tick the collections/environments to bring over, no file export needed. The key stays in memory and is never written to disk.
 - **Specs**: edit OpenAPI (YAML/JSON) with an endpoint list and live syntax errors alongside; *Generate Collection* builds a collection (folders by tag, a `{{baseUrl}}` variable, path params as variables, query/headers, sample bodies from schemas).
 - **Mocks**: local mock server (`http://localhost:<port>`). Each route has a method (or ANY), a path like `/users/:id` or `/files/*`, status, headers, body and delay. Bodies/headers can use `{{id}}` (path params), query params and dynamic variables such as `{{$guid}}`. CORS is open, incoming requests are logged, and route changes take effect while the server is running.
 - **Datasets**: editable data tables, import CSV/JSON, export CSV. Column names are variable names.
@@ -150,6 +151,7 @@ The workspace is saved to `~/.local/share/rustman/workspace.json` (Linux). Set `
 | `src/mock.rs` | Mock HTTP server (tokio) |
 | `src/dataset.rs` | CSV/JSON reading and writing for datasets |
 | `src/mcp.rs` | MCP server for toolsets (JSON-RPC: initialize, tools/list, tools/call) |
+| `src/postman_api.rs` | Postman API client: lists workspaces, downloads collections/environments to import |
 | `src/codegen.rs` | Code snippet generation for 34 languages + syntax highlighter |
 | `src/storage.rs` | Workspace load/save |
 | `src/theme.rs` | Light/dark palettes (measured from Postman), fonts, egui style |
@@ -162,6 +164,8 @@ The workspace is saved to `~/.local/share/rustman/workspace.json` (Linux). Set `
 | `src/app/response.rs` | Response pane |
 | `src/app/dialogs.rs` | Dialogs |
 | `src/app/oauth.rs` | OAuth 2.0 token flow and the waiting-for-login dialog |
+| `src/app/examples.rs` | The request's Examples tab, examples from responses |
+| `src/app/postman.rs` | Import → *From Postman* |
 | `src/app/environment.rs` | Environment / globals tab |
 | `src/app/console.rs` | Console (request log) |
 | `src/app/mocks.rs` | Mock server tab |

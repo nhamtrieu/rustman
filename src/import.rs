@@ -306,10 +306,60 @@ fn parse_items(v: Option<&Value>) -> Vec<Item> {
                 let mut r = parse_request(name, e.get("request").unwrap_or(&Value::Null));
                 r.pre_request_script = pre;
                 r.post_response_script = test;
+                r.examples = e.get("response").and_then(Value::as_array).map(|a| a.iter().map(|x| parse_example(x, &r)).collect()).unwrap_or_default();
                 Item::Request(r)
             }
         })
         .collect()
+}
+
+/// A Postman saved response (`item.response[]`). Without `originalRequest` the request's own
+/// method, URL, headers and body are used.
+fn parse_example(v: &Value, request: &Request) -> Example {
+    let original = v.get("originalRequest").filter(|o| !o.is_null()).map(|o| parse_request(String::new(), o));
+    let req = original.as_ref().unwrap_or(request);
+    let headers = kv_list(v.get("header"));
+    let lang = match v.get("_postman_previewlanguage").and_then(Value::as_str) {
+        Some("json") => RawLang::Json,
+        Some("xml") => RawLang::Xml,
+        Some("html") => RawLang::Html,
+        Some("javascript") => RawLang::JavaScript,
+        Some(_) => RawLang::Text,
+        None => Example::lang_for_content_type(headers.iter().find(|h| h.key.eq_ignore_ascii_case("content-type")).map(|h| h.value.as_str()).unwrap_or("")),
+    };
+    Example {
+        name: v.get("name").map(s).unwrap_or_else(|| "Example".into()),
+        method: req.method,
+        url: req.url.clone(),
+        request_headers: req.headers.clone(),
+        request_body: req.body.clone(),
+        status: v.get("code").and_then(Value::as_u64).and_then(|c| u16::try_from(c).ok()).unwrap_or(200),
+        headers,
+        body: v.get("body").map(s).unwrap_or_default(),
+        body_lang: lang,
+        ..Default::default()
+    }
+}
+
+fn example_to_json(e: &Example) -> Value {
+    let original = Request { method: e.method, url: e.url.clone(), headers: e.request_headers.clone(), body: e.request_body.clone(), auth: Auth::default(), ..Default::default() };
+    let lang = match e.body_lang {
+        RawLang::Json => "json",
+        RawLang::Xml => "xml",
+        RawLang::Html => "html",
+        RawLang::JavaScript => "javascript",
+        RawLang::Text => "text",
+    };
+    json!({
+        "name": e.name,
+        "originalRequest": request_to_json(&original),
+        "status": status_text(e.status),
+        "code": e.status,
+        "_postman_previewlanguage": lang,
+        "header": kv_to_json(&e.headers),
+        "cookie": [],
+        "body": e.body,
+    })
 }
 
 pub fn import_postman_collection(json_text: &str) -> Result<Collection, String> {
@@ -335,6 +385,8 @@ pub fn import_postman_collection(json_text: &str) -> Result<Collection, String> 
 
 pub fn import_postman_environment(json_text: &str) -> Result<Environment, String> {
     let v: Value = serde_json::from_str(json_text).map_err(|e| format!("Invalid JSON: {e}"))?;
+    // The Postman API wraps it: {"environment": {...}}
+    let v = v.get("environment").cloned().unwrap_or(v);
     let values = v.get("values").ok_or("Not a Postman environment (missing `values`)")?;
     Ok(Environment {
         name: v.get("name").map(s).unwrap_or_else(|| "Imported".into()),
@@ -528,7 +580,7 @@ fn items_to_json(items: &[Item]) -> Value {
                     v
                 }
                 Item::Request(r) => {
-                    let mut v = json!({ "name": r.name, "request": request_to_json(r), "response": [] });
+                    let mut v = json!({ "name": r.name, "request": request_to_json(r), "response": r.examples.iter().map(example_to_json).collect::<Vec<_>>() });
                     if let Some(ev) = events_to_json(&r.pre_request_script, &r.post_response_script) {
                         v["event"] = ev;
                     }
@@ -870,6 +922,33 @@ mod tests {
         let again = import_postman_collection(&exported).unwrap();
         assert_eq!(again.items.len(), 1);
         assert_eq!(again.variables, c.variables);
+    }
+
+    #[test]
+    fn postman_examples_roundtrip() {
+        let src = r#"{
+          "info": {"name": "E"},
+          "item": [{"name": "Get user", "request": {"method": "GET", "url": "{{base}}/users/1"},
+            "response": [
+              {"name": "Found", "originalRequest": {"method": "GET", "url": {"raw": "{{base}}/users/{{id}}"}},
+               "status": "OK", "code": 200, "_postman_previewlanguage": "json",
+               "header": [{"key": "Content-Type", "value": "application/json"}], "body": "{\"id\": 1}"},
+              {"name": "Missing", "code": 404, "header": [{"key": "Content-Type", "value": "text/plain"}], "body": "nope"}
+            ]}]
+        }"#;
+        let c = import_postman_collection(src).unwrap();
+        let Item::Request(r) = &c.items[0] else { panic!() };
+        assert_eq!(r.examples.len(), 2);
+        let (found, missing) = (&r.examples[0], &r.examples[1]);
+        assert_eq!((found.name.as_str(), found.status, found.url.as_str(), found.body_lang), ("Found", 200, "{{base}}/users/{{id}}", RawLang::Json));
+        assert_eq!((missing.status, missing.url.as_str(), missing.body_lang), (404, "{{base}}/users/1", RawLang::Text), "no originalRequest: the request's URL");
+
+        let exported: Value = serde_json::from_str(&export_postman_collection(&c)).unwrap();
+        assert_eq!(exported["item"][0]["response"][1]["status"], "Not Found");
+        let again = import_postman_collection(&exported.to_string()).unwrap();
+        let Item::Request(r2) = &again.items[0] else { panic!() };
+        let strip = |e: &Example| Example { id: uuid::Uuid::nil(), ..e.clone() };
+        assert_eq!(r2.examples.iter().map(strip).collect::<Vec<_>>(), r.examples.iter().map(strip).collect::<Vec<_>>());
     }
 
     #[test]

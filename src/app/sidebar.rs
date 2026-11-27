@@ -130,7 +130,7 @@ impl RustmanApp {
                 Some(NewKind::Unsupported) | None => {}
             }
             if pm::icon_button(ui, icons::ARROW_SQUARE_IN, 16.0, "Import").clicked() {
-                self.import = Some(ImportState { text: String::new(), error: None });
+                self.import = Some(ImportState::default());
             }
             let more = pm::icon_button(ui, icons::DOTS_THREE, 16.0, "More");
             egui::Popup::menu(&more).show(|ui| {
@@ -547,10 +547,11 @@ fn collection_rows(ui: &mut Ui, tc: &mut TreeCtx, c: &Collection, p: &Palette) {
         tc.actions.push(TreeAction::MoveInto { drag: *d, collection: cid, folder: None });
     }
     let menu = |ui: &mut Ui, actions: &mut Vec<TreeAction>| {
-        let items: [(&str, TreeAction); 11] = [
+        let items: [(&str, TreeAction); 12] = [
             ("Add request", TreeAction::NewRequest { collection: cid, folder: None }),
             ("Add folder", TreeAction::NewFolder { collection: cid, folder: None }),
             ("Run collection", TreeAction::Run(cid)),
+            ("Mock from examples", TreeAction::MockFromExamples(cid)),
             ("Edit", TreeAction::EditCollection(cid, CollSection::Overview)),
             ("Variables", TreeAction::EditCollection(cid, CollSection::Variables)),
             ("Authorization", TreeAction::EditCollection(cid, CollSection::Auth)),

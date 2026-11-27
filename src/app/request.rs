@@ -211,6 +211,7 @@ impl RustmanApp {
         let mut oauth_op = None;
         let tab = &mut self.tabs[i];
         let base = Id::unique(("req", tab.request.id));
+        let example_template = Example::from_request(&tab.request, "");
 
         ui.add_space(4.0);
         ui.horizontal(|ui| {
@@ -221,6 +222,7 @@ impl RustmanApp {
             let nh = r.headers.iter().filter(|h| h.enabled && !h.key.is_empty()).count() + auto_headers.len();
             let body_on = r.body.mode != BodyMode::None;
             let scripts_on = !r.pre_request_script.trim().is_empty() || !r.post_response_script.trim().is_empty();
+            let n_examples = r.examples.len();
             let sections = [
                 (ReqSection::Docs, Some(icons::TEXT_ALIGN_LEFT), "Docs", None, false),
                 (ReqSection::Params, None, "Params", None, params_on),
@@ -228,6 +230,7 @@ impl RustmanApp {
                 (ReqSection::Headers, None, "Headers", Some(nh), nh > 0),
                 (ReqSection::Body, None, "Body", None, body_on),
                 (ReqSection::Scripts, None, "Scripts", None, scripts_on),
+                (ReqSection::Examples, None, "Examples", (n_examples > 0).then_some(n_examples), false),
                 (ReqSection::Settings, None, "Settings", None, false),
             ];
             for (sec, icon, label, count, dot) in sections {
@@ -284,6 +287,7 @@ impl RustmanApp {
             }
             ReqSection::Body => body_editor(ui, base, &mut tab.request.body, &vars, p),
             ReqSection::Scripts => scripts_editor(ui, base, &mut tab.request.pre_request_script, &mut tab.request.post_response_script, &mut tab.script_phase),
+            ReqSection::Examples => super::examples::examples_editor(ui, base, &mut tab.request.examples, &mut tab.example_sel, &example_template, &vars),
             ReqSection::Settings => settings_form(ui, &mut tab.request.settings, p),
         });
         if open_cookies {

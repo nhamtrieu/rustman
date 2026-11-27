@@ -3,6 +3,8 @@
 mod chrome;
 mod console;
 mod dialogs;
+mod examples;
+mod postman;
 mod environment;
 mod mocks;
 mod oauth;
@@ -43,6 +45,7 @@ enum ReqSection {
     Headers,
     Body,
     Scripts,
+    Examples,
     Settings,
 }
 
@@ -188,6 +191,8 @@ struct Tab {
     script_phase: ScriptPhase,
     /// Test results filter: 0 all, 1 passed, 2 skipped, 3 failed.
     test_filter: u8,
+    /// Example open in the Examples section.
+    example_sel: Option<Uuid>,
     state: TabState,
 }
 
@@ -208,6 +213,7 @@ impl Tab {
             show_hidden_headers: false,
             script_phase: ScriptPhase::Pre,
             test_filter: 0,
+            example_sel: None,
             state: TabState::Idle,
         }
     }
@@ -280,9 +286,33 @@ struct SaveAsState {
     new_collection_name: String,
 }
 
+#[derive(Default)]
 struct ImportState {
     text: String,
     error: Option<String>,
+    /// "From Postman" tab instead of paste / file.
+    from_postman: bool,
+    postman: PostmanImport,
+}
+
+/// Import straight from a Postman account through the Postman API.
+#[derive(Default)]
+struct PostmanImport {
+    workspaces: Vec<crate::postman_api::Workspace>,
+    workspace: Option<String>,
+    listing: Option<crate::postman_api::Listing>,
+    /// uids of the collections and environments to import.
+    selected: std::collections::HashSet<String>,
+    busy: Option<&'static str>,
+    error: Option<String>,
+}
+
+/// Answers from the Postman API tasks.
+enum PostmanReply {
+    Workspaces(Result<Vec<crate::postman_api::Workspace>, String>),
+    Listing(String, Result<crate::postman_api::Listing, String>),
+    /// Downloaded (is_environment, name, JSON) and the failures.
+    Downloaded(Vec<(bool, String, String)>, Vec<String>),
 }
 
 /// Payload for drag & drop in the collection tree.
@@ -303,6 +333,8 @@ enum TreeAction {
     Delete(Confirm),
     EditCollection(Uuid, CollSection),
     EditFolder { collection: Uuid, folder: Uuid, section: CollSection },
+    /// New mock server answering with the collection's examples.
+    MockFromExamples(Uuid),
     Export(Uuid),
     Run(Uuid),
     MoveInto { drag: DragItem, collection: Uuid, folder: Option<Uuid> },
@@ -335,6 +367,7 @@ enum Msg {
     Done { tab: Uuid, executed: Box<exec::Executed> },
     /// An OAuth 2.0 token request finished.
     OAuth { job: Uuid, outcome: Box<crate::oauth2::Outcome> },
+    Postman(PostmanReply),
 }
 
 pub struct RustmanApp {
@@ -384,6 +417,8 @@ pub struct RustmanApp {
     confirm: Option<Confirm>,
     save_as: Option<SaveAsState>,
     import: Option<ImportState>,
+    /// Postman API key for "Import → From Postman": kept for this session only, never saved.
+    postman_key: String,
     /// OAuth 2.0 token request in progress (or failed, showing its error).
     oauth: Option<oauth::OAuthJob>,
     cookies_open: bool,
@@ -448,6 +483,7 @@ impl RustmanApp {
             confirm: None,
             save_as: None,
             import: None,
+            postman_key: std::env::var("POSTMAN_API_KEY").unwrap_or_default(),
             oauth: None,
             cookies_open: false,
             settings_open: false,
@@ -785,6 +821,7 @@ impl RustmanApp {
                     }
                 }
                 Msg::OAuth { job, outcome } => self.finish_oauth(job, *outcome),
+                Msg::Postman(reply) => self.postman_reply(reply),
                 Msg::Done { tab, executed } => {
                     let Some(t) = self.tabs.iter_mut().find(|t| t.request.id == tab) else { continue };
                     let TabState::Loading { snapshot, log_id, env, collection, .. } = std::mem::replace(&mut t.state, TabState::Idle) else {
@@ -1053,6 +1090,7 @@ impl RustmanApp {
             TreeAction::EditFolder { collection, folder, section } => self.folder_editor = Some((collection, folder, section)),
             TreeAction::Export(id) => self.export_collection(id),
             TreeAction::Run(id) => self.open_runner(id),
+            TreeAction::MockFromExamples(id) => self.mock_from_examples(id),
             TreeAction::MoveInto { drag, collection, folder } => {
                 self.move_item(
                     drag,
@@ -1130,6 +1168,24 @@ impl RustmanApp {
                 Err(e) => self.notify_err(format!("Export failed: {e}")),
             }
         }
+    }
+
+    fn mock_from_examples(&mut self, collection: Uuid) {
+        let Some(c) = self.ws.collection(collection) else { return };
+        let routes = mock_routes_from_examples(&c.items);
+        if routes.is_empty() {
+            self.notify_err(format!("\"{}\" has no examples yet. Send a request and click Save as Example in the response first.", c.name));
+            return;
+        }
+        let (name, n) = (format!("{} mock", c.name), routes.len());
+        let id = self.ws.add_entity(EntityKind::Mock);
+        if let Some(m) = self.ws.mocks.iter_mut().find(|m| m.id == id) {
+            m.name = name;
+            m.routes = routes;
+        }
+        self.sb_open.insert(EntityKind::Mock);
+        self.open_side(SideTab::Entity(EntityKind::Mock, id));
+        self.notify(format!("Created a mock server with {n} route{} from the examples", if n == 1 { "" } else { "s" }));
     }
 
     /// Import cURL, Postman collection or Postman environment (auto-detected).
@@ -1247,7 +1303,7 @@ impl RustmanApp {
             self.sidebar_visible = !self.sidebar_visible;
         }
         if import {
-            self.import = Some(ImportState { text: String::new(), error: None });
+            self.import = Some(ImportState::default());
         }
     }
 }
@@ -1279,7 +1335,13 @@ impl RustmanApp {
                         c.items.iter().find_map(|i| if let Item::Folder(f) = i { Some((c.id, f.id, CollSection::Auth)) } else { None })
                     })
                 }
-                Ok("import") => self.import = Some(ImportState { text: String::new(), error: None }),
+                Ok("import") => self.import = Some(ImportState::default()),
+                Ok("import_postman") => self.import = Some(ImportState { from_postman: true, ..Default::default() }),
+                Ok("examples") => {
+                    if let Some(t) = self.tabs.get_mut(self.active) {
+                        t.req_section = ReqSection::Examples;
+                    }
+                }
                 Ok("code") => self.right_panel = Some(RightPanel::Code),
                 Ok("cookies") => self.cookies_open = true,
                 Ok("settings") => self.settings_open = true,

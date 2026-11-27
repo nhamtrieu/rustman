@@ -451,6 +451,72 @@ pub struct Request {
     pub pre_request_script: String,
     /// JavaScript run after the response arrives (tests).
     pub post_response_script: String,
+    /// Saved responses ("examples" in Postman), used as documentation and for mock servers.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub examples: Vec<Example>,
+}
+
+/// A saved response of a request, with the request it answered.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Example {
+    pub id: Uuid,
+    pub name: String,
+    // The request as it was sent.
+    pub method: Method,
+    pub url: String,
+    pub request_headers: Vec<KeyValue>,
+    pub request_body: Body,
+    // The response.
+    pub status: u16,
+    pub headers: Vec<KeyValue>,
+    pub body: String,
+    pub body_lang: RawLang,
+}
+
+impl Default for Example {
+    fn default() -> Self {
+        Self {
+            id: Uuid::new_v4(),
+            name: "New Example".into(),
+            method: Method::Get,
+            url: String::new(),
+            request_headers: Vec::new(),
+            request_body: Body::default(),
+            status: 200,
+            headers: vec![KeyValue::new("Content-Type", "application/json")],
+            body: String::new(),
+            body_lang: RawLang::Json,
+        }
+    }
+}
+
+impl Example {
+    /// A new example with the request's current method, URL, headers and body.
+    pub fn from_request(r: &Request, name: impl Into<String>) -> Self {
+        Self { name: name.into(), method: r.method, url: r.url.clone(), request_headers: r.headers.clone(), request_body: r.body.clone(), ..Default::default() }
+    }
+
+    /// `RawLang` matching a Content-Type header value.
+    pub fn lang_for_content_type(ct: &str) -> RawLang {
+        let ct = ct.to_ascii_lowercase();
+        if ct.contains("json") {
+            RawLang::Json
+        } else if ct.contains("xml") {
+            RawLang::Xml
+        } else if ct.contains("html") {
+            RawLang::Html
+        } else if ct.contains("javascript") {
+            RawLang::JavaScript
+        } else {
+            RawLang::Text
+        }
+    }
+}
+
+/// Reason phrase for a status code ("OK", "Not Found").
+pub fn status_text(code: u16) -> &'static str {
+    reqwest::StatusCode::from_u16(code).ok().and_then(|s| s.canonical_reason()).unwrap_or("")
 }
 
 impl Default for Request {
@@ -468,6 +534,7 @@ impl Default for Request {
             description: String::new(),
             pre_request_script: String::new(),
             post_response_script: String::new(),
+            examples: Vec::new(),
         }
     }
 }
@@ -475,7 +542,11 @@ impl Default for Request {
 impl Request {
     /// Deep copy with fresh ids.
     pub fn duplicate(&self) -> Self {
-        Self { id: Uuid::new_v4(), name: format!("{} Copy", self.name), ..self.clone() }
+        Self { id: Uuid::new_v4(), name: format!("{} Copy", self.name), examples: self.fresh_examples(), ..self.clone() }
+    }
+
+    fn fresh_examples(&self) -> Vec<Example> {
+        self.examples.iter().map(|e| Example { id: Uuid::new_v4(), ..e.clone() }).collect()
     }
 
     /// Re-parse the query string of `url` into `params`, keeping disabled params.
@@ -600,7 +671,7 @@ impl Item {
     }
     fn fresh_ids(&self) -> Item {
         match self {
-            Item::Request(r) => Item::Request(Request { id: Uuid::new_v4(), ..r.clone() }),
+            Item::Request(r) => Item::Request(Request { id: Uuid::new_v4(), examples: r.fresh_examples(), ..r.clone() }),
             Item::Folder(f) => Item::Folder(Folder {
                 id: Uuid::new_v4(),
                 items: f.items.iter().map(Item::fresh_ids).collect(),
@@ -1060,6 +1131,51 @@ impl Default for MockRoute {
     }
 }
 
+/// Mock route path for a request URL: drops `{{baseUrl}}` / scheme and host, the query and
+/// the fragment, and turns `{{var}}` segments into `:var` parameters.
+pub fn mock_path(url: &str) -> String {
+    let url = url.trim();
+    let rest = if let Some(after) = url.strip_prefix("{{").and_then(|r| r.split_once("}}")).map(|(_, r)| r) {
+        after
+    } else if let Some((_, after)) = url.split_once("://") {
+        after.find('/').map(|i| &after[i..]).unwrap_or("")
+    } else if url.starts_with('/') {
+        url
+    } else {
+        url.find('/').map(|i| &url[i..]).unwrap_or("")
+    };
+    let path = rest.split(['?', '#']).next().unwrap_or("");
+    let segments: Vec<String> = path
+        .split('/')
+        .filter(|s| !s.is_empty())
+        .map(|seg| match seg.strip_prefix("{{").and_then(|s| s.strip_suffix("}}")) {
+            Some(var) if !var.contains("{{") => format!(":{}", var.trim()),
+            _ => seg.to_string(),
+        })
+        .collect();
+    format!("/{}", segments.join("/"))
+}
+
+/// One mock route per example of every request in `items`.
+pub fn mock_routes_from_examples(items: &[Item]) -> Vec<MockRoute> {
+    let mut out = Vec::new();
+    for item in items {
+        match item {
+            Item::Folder(f) => out.extend(mock_routes_from_examples(&f.items)),
+            Item::Request(r) => {
+                for e in &r.examples {
+                    let mut headers = e.headers.clone();
+                    if !headers.iter().any(|h| h.key.eq_ignore_ascii_case("content-type")) && !e.body.is_empty() {
+                        headers.push(KeyValue::new("Content-Type", e.body_lang.content_type()));
+                    }
+                    out.push(MockRoute { method: Some(e.method), path: mock_path(&e.url), status: e.status, headers, body: e.body.clone(), ..Default::default() });
+                }
+            }
+        }
+    }
+    out
+}
+
 /// Tabular data (CSV/JSON) used to drive collection runs: one row per iteration.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
@@ -1388,6 +1504,24 @@ mod tests {
         // Old workspaces have folders without the new fields.
         let f: Folder = serde_json::from_str(r#"{"id":"6f1c1a8e-3c2b-4f0e-9a51-0b8f7f1e2d3c","name":"old"}"#).unwrap();
         assert_eq!(f.auth.kind, AuthKind::Inherit);
+    }
+
+    #[test]
+    fn mock_paths_and_routes_from_examples() {
+        assert_eq!(mock_path("{{baseUrl}}/users/{{id}}?full=1"), "/users/:id");
+        assert_eq!(mock_path("https://api.x.io:8443/v1/items/#top"), "/v1/items");
+        assert_eq!(mock_path("api.x.io/health"), "/health");
+        assert_eq!(mock_path("{{baseUrl}}"), "/");
+        assert_eq!(mock_path("/a/{{b}}/c"), "/a/:b/c");
+
+        let mut r = Request { url: "{{base}}/users/{{id}}".into(), ..Default::default() };
+        r.examples.push(Example { status: 404, body: "{}".into(), headers: vec![], ..Example::from_request(&r, "missing") });
+        let mut f = Folder::new("f");
+        f.items.push(Item::Request(r));
+        let routes = mock_routes_from_examples(&[Item::Folder(f)]);
+        assert_eq!(routes.len(), 1);
+        assert_eq!((routes[0].path.as_str(), routes[0].status, routes[0].method), ("/users/:id", 404, Some(Method::Get)));
+        assert_eq!(routes[0].headers, vec![KeyValue::new("Content-Type", "application/json")], "content type from the body language");
     }
 
     #[test]

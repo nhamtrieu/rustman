@@ -31,7 +31,7 @@ impl RustmanApp {
                 }
                 ui.separator();
                 if ui.button("Import…                      Ctrl+O").clicked() {
-                    self.import = Some(ImportState { text: String::new(), error: None });
+                    self.import = Some(ImportState::default());
                     ui.close();
                 }
                 if ui.button("Save                           Ctrl+S").clicked() {
@@ -135,7 +135,7 @@ impl RustmanApp {
             let ws_btn = pm::text_button(ui, Some(icons::LOCK_SIMPLE), "My Workspace", true);
             egui::Popup::menu(&ws_btn).show(|ui| {
                 if ui.button("Import…").clicked() {
-                    self.import = Some(ImportState { text: String::new(), error: None });
+                    self.import = Some(ImportState::default());
                     ui.close();
                 }
                 if ui.button("New Collection").clicked() {
@@ -428,7 +428,7 @@ impl RustmanApp {
                 self.sidebar_visible = !self.sidebar_visible;
             }
             if status_button(ui, Some(icons::ARROW_SQUARE_IN), "Import").clicked() {
-                self.import = Some(ImportState { text: String::new(), error: None });
+                self.import = Some(ImportState::default());
             }
             if status_button(ui, Some(icons::COOKIE), "Cookies").clicked() {
                 self.cookies_open = true;

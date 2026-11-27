@@ -270,6 +270,7 @@ impl RustmanApp {
         let Some(mut st) = self.import.take() else { return };
         let mut open = true;
         let mut do_import = false;
+        let mut postman_actions = None;
         let mut picked: Option<String> = None;
         // Files dropped onto the window are imported directly.
         let dropped: Vec<egui::DroppedFileHandle> = ctx.input(|i| i.raw.dropped_files.clone());
@@ -286,6 +287,19 @@ impl RustmanApp {
             .collapsible(false)
             .show(ctx, |ui| {
                 let p = pal(ui);
+                ui.horizontal(|ui| {
+                    ui.spacing_mut().item_spacing.x = 2.0;
+                    for (postman, label) in [(false, "File or text"), (true, "From Postman")] {
+                        if pm::pill_tab(ui, None, label, None, false, st.from_postman == postman).clicked() {
+                            st.from_postman = postman;
+                        }
+                    }
+                });
+                ui.add_space(10.0);
+                if st.from_postman {
+                    postman_actions = Some(super::postman::postman_tab(ui, &mut st.postman, &mut self.postman_key));
+                    return;
+                }
                 ui.add(
                     egui::TextEdit::multiline(&mut st.text)
                         .code_editor()
@@ -319,6 +333,9 @@ impl RustmanApp {
                     }
                 });
             });
+        if let Some(a) = postman_actions {
+            self.postman_actions(&mut st.postman, a, ctx);
+        }
         let text = picked.or_else(|| if do_import { Some(st.text.clone()) } else { None });
         if let Some(text) = text {
             match self.import_text(&text) {

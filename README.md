@@ -47,7 +47,8 @@ scripts/install-desktop.sh --uninstall
 - **Certificates** (Settings → Certificates): thêm CA (file PEM, tin cậy thêm ngoài CA có sẵn) và client certificate cho mutual TLS theo host (`api.example.com`, `*.example.com`, có thể kèm `:port`), file CRT + KEY dạng PEM.
 - **Scripts** (tab *Scripts* của request, folder và collection): JavaScript chạy *Pre-request* (trước khi gửi) và *Post-response* (sau khi nhận response), API `pm` tương thích Postman. Thứ tự chạy: script của collection, rồi của từng folder chứa request (từ ngoài vào trong), rồi của request. Chi tiết ở mục [Scripts](#scripts).
 - **Test Results**: kết quả `pm.test` (PASS/FAIL/SKIPPED, lọc theo trạng thái) và lỗi script kèm số dòng.
-- **Response**: status/time/size, JSON pretty có tô màu (hiển thị ảo hoá theo dòng, xem được response lớn), Raw, Headers, Cookies, Info, Copy, Save ra file.
+- **Response**: status/time/size, JSON pretty có tô màu (hiển thị ảo hoá theo dòng, xem được response lớn), Raw, Headers, Cookies, Info, Copy, Save ra file, *Save as Example*.
+- **Examples** (tab *Examples* của request): lưu response làm ví dụ (nút *Save as Example*) hoặc tự thêm; mỗi example có method/URL, status, headers và body, sửa được. Import/export cùng collection Postman (`response` của item). Chuột phải collection → *Mock from examples* tạo mock server trả về các example (`{{id}}` trong URL thành `:id`).
 - **Collections**: folder lồng nhau, kéo thả để sắp xếp/di chuyển, rename/duplicate/delete, biến, auth và script cấp collection. Folder có mô tả, auth và script riêng (chuột phải folder → *Edit* / *Authorization* / *Scripts*); auth của folder đặt *Inherit* thì lấy tiếp từ cấp trên.
 - **Environments & biến**: `{{var}}` ở mọi chỗ, độ ưu tiên environment > collection > globals; biến động `{{$guid}}`, `{{$timestamp}}`, `{{$isoTimestamp}}`, `{{$randomInt}}`, `{{$randomEmail}}`...; tô xanh/đỏ cho biến đã/chưa định nghĩa, rê chuột để xem giá trị đã thay.
 - **Console** (status bar → Console, hoặc Ctrl+Alt+C): log mọi request đã gửi với URL đã thay biến, request/response headers và body, thời gian, kích thước, lỗi; lọc theo chữ hoặc chỉ lỗi; chuột phải để copy URL/response.
@@ -55,7 +56,7 @@ scripts/install-desktop.sh --uninstall
 - **Terminal** (status bar → Terminal, hoặc Ctrl+\`): shell thật trong PTY (bash/zsh/PowerShell) nằm chung panel với Console. Hỗ trợ màu 16/256/truecolor, phím mũi tên, Ctrl+C/D/Z…, dán (bracketed paste), cuộn lại lịch sử bằng chuột, chương trình toàn màn hình (vim, htop). Ctrl+Shift+C hoặc nút copy để chép màn hình.
 - **Cookie jar** dùng chung giữa các request (Tools → Clear cookies để xoá).
 - **History** của các request đã gửi.
-- **Import**: Postman Collection v2.1 (kể cả script, auth và mô tả của folder), Postman Environment, OpenAPI 3 / Swagger 2 (JSON hoặc YAML, tạo cả spec lẫn collection), lệnh cURL (dán thẳng vào ô URL cũng được).
+- **Import**: Postman Collection v2.1 (kể cả script, auth, mô tả của folder và examples), Postman Environment, OpenAPI 3 / Swagger 2 (JSON hoặc YAML, tạo cả spec lẫn collection), lệnh cURL (dán thẳng vào ô URL cũng được). Tab *From Postman* import thẳng từ tài khoản Postman qua Postman API: dán API key (Postman → Settings → API keys, hoặc đặt biến môi trường `POSTMAN_API_KEY`), chọn workspace rồi tick các collection/environment cần lấy, không cần export file. Key chỉ giữ trong bộ nhớ, không ghi ra đĩa.
 - **Specs**: soạn OpenAPI (YAML/JSON) với danh sách endpoint và báo lỗi cú pháp ngay bên cạnh; nút *Generate Collection* sinh collection (folder theo tag, biến `{{baseUrl}}`, path param thành biến, query/header, body mẫu từ schema).
 - **Mocks**: mock server chạy cục bộ (`http://localhost:<port>`). Mỗi route có method (hoặc ANY), path dạng `/users/:id` hay `/files/*`, status, headers, body, delay. Body/header dùng được `{{id}}` (path param), query param và biến động `{{$guid}}`. Mở CORS sẵn, có log các request gọi tới. Đổi route khi đang chạy thì có hiệu lực ngay.
 - **Datasets**: bảng dữ liệu sửa trực tiếp, import CSV/JSON, export CSV. Tên cột là tên biến.
@@ -150,6 +151,7 @@ Workspace được lưu vào `~/.local/share/rustman/workspace.json` (Linux). Đ
 | `src/mock.rs` | Mock HTTP server (tokio) |
 | `src/dataset.rs` | Đọc/ghi CSV, JSON cho dataset |
 | `src/mcp.rs` | MCP server cho toolsets (JSON-RPC: initialize, tools/list, tools/call) |
+| `src/postman_api.rs` | Client Postman API: liệt kê workspace, tải collection/environment để import |
 | `src/codegen.rs` | Sinh code snippet cho 34 ngôn ngữ + bộ tô màu cú pháp |
 | `src/storage.rs` | Lưu/đọc workspace |
 | `src/theme.rs` | Bảng màu sáng/tối (đo từ Postman), font, style egui |
@@ -162,6 +164,8 @@ Workspace được lưu vào `~/.local/share/rustman/workspace.json` (Linux). Đ
 | `src/app/response.rs` | Response pane |
 | `src/app/dialogs.rs` | Các hộp thoại |
 | `src/app/oauth.rs` | Chạy luồng lấy token OAuth 2.0 và hộp thoại chờ đăng nhập |
+| `src/app/examples.rs` | Tab Examples của request, tạo example từ response |
+| `src/app/postman.rs` | Import → *From Postman* |
 | `src/app/environment.rs` | Tab environment / globals |
 | `src/app/console.rs` | Console (log request) |
 | `src/app/mocks.rs` | Tab mock server |
