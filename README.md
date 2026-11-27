@@ -9,9 +9,19 @@
 
 [English](README.en.md) | **Tiếng Việt**
 
+[![CI](https://github.com/nhamtrieu/rustman/actions/workflows/ci.yml/badge.svg)](https://github.com/nhamtrieu/rustman/actions/workflows/ci.yml)
+
 API client kiểu Postman, viết bằng Rust (egui + reqwest). Native, một file binary, không cần tài khoản hay cloud.
 
-## Chạy
+## Tải về
+
+File chạy sẵn cho Linux (x86_64), macOS (Apple Silicon và Intel) và Windows (x86_64) ở trang [Releases](https://github.com/nhamtrieu/rustman/releases), kèm `SHA256SUMS.txt`.
+
+- **Linux**: giải nén rồi chạy `./rustman`. Để có icon trên dock và trong menu ứng dụng: `scripts/install-desktop.sh ./rustman`.
+- **macOS**: bản build chưa được ký, lần đầu cần chạy `xattr -d com.apple.quarantine rustman` (hoặc chuột phải → Open).
+- **Windows**: giải nén rồi chạy `rustman.exe`.
+
+## Chạy từ source
 
 ```bash
 cargo run --release

@@ -9,9 +9,19 @@
 
 **English** | [Tiếng Việt](README.md)
 
+[![CI](https://github.com/nhamtrieu/rustman/actions/workflows/ci.yml/badge.svg)](https://github.com/nhamtrieu/rustman/actions/workflows/ci.yml)
+
 A Postman-style API client written in Rust (egui + reqwest). Native, a single binary, no account or cloud required.
 
-## Running
+## Download
+
+Prebuilt binaries for Linux (x86_64), macOS (Apple Silicon and Intel) and Windows (x86_64) are on the [Releases](https://github.com/nhamtrieu/rustman/releases) page, with `SHA256SUMS.txt`.
+
+- **Linux**: extract and run `./rustman`. For the dock icon and an app-menu entry: `scripts/install-desktop.sh ./rustman`.
+- **macOS**: the build is not signed; the first time, run `xattr -d com.apple.quarantine rustman` (or right-click → Open).
+- **Windows**: extract and run `rustman.exe`.
+
+## Running from source
 
 ```bash
 cargo run --release
